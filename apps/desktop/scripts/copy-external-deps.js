@@ -62,10 +62,33 @@ function collectClosure(rootNames, fromDir) {
 }
 
 /**
+ * node-pty ships prebuilt native binaries for every platform/arch it
+ * supports (win32-arm64, win32-x64, darwin-x64, darwin-arm64, several linux
+ * variants) in one shared `prebuilds/` directory — fine for a dev install
+ * that might run anywhere, real waste in a build for ONE specific platform.
+ * Confirmed by measuring a real build: the two win32 prebuilds alone were
+ * ~58MB out of a ~62MB node-pty payload, in a macOS-only app that doesn't
+ * even support Windows yet. Deleting everything except the target
+ * `<platform>-<arch>` directory after copying is safe — node-pty only ever
+ * loads the one prebuild matching `process.platform`/`process.arch` at
+ * runtime, never any of the others.
+ */
+function pruneNodePtyPrebuilds(destNodeModules, platform, arch) {
+  const prebuildsDir = path.join(destNodeModules, "node-pty", "prebuilds");
+  if (!fs.existsSync(prebuildsDir)) return;
+  const keep = `${platform}-${arch}`;
+  for (const entry of fs.readdirSync(prebuildsDir)) {
+    if (entry !== keep) fs.rmSync(path.join(prebuildsDir, entry), { recursive: true, force: true });
+  }
+}
+
+/**
  * @param {string} buildPath - electron-packager's staged app directory
  *   (apps/desktop's files already copied here, before asar packing).
+ * @param {string} platform - electron-packager's target platform (e.g. "darwin").
+ * @param {string} arch - electron-packager's target arch (e.g. "arm64").
  */
-export function copyExternalDeps(buildPath) {
+export function copyExternalDeps(buildPath, platform, arch) {
   // Keep this in sync with vite.main.config.ts's rollupOptions.external —
   // every real npm dependency the main-process build doesn't bundle needs
   // to physically exist here instead, or it's simply absent at runtime in
@@ -94,5 +117,6 @@ export function copyExternalDeps(buildPath) {
     fs.cpSync(srcDir, destDir, { recursive: true, dereference: true });
     copied++;
   }
+  pruneNodePtyPrebuilds(destNodeModules, platform, arch);
   console.log(`[copy-external-deps] copied ${copied} package(s) into ${destNodeModules}`);
 }

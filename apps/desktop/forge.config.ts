@@ -41,9 +41,9 @@ const config: ForgeConfig = {
     // before this existed. See scripts/copy-external-deps.js for the actual
     // resolution logic.
     afterCopy: [
-      (buildPath, _electronVersion, _platform, _arch, callback) => {
+      (buildPath, _electronVersion, platform, arch, callback) => {
         try {
-          copyExternalDeps(buildPath);
+          copyExternalDeps(buildPath, platform, arch);
           callback();
         } catch (err) {
           callback(err as Error);
