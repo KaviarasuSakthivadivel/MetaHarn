@@ -1,0 +1,58 @@
+name: Release (macOS)
+
+# Builds the MetaHarn desktop app and publishes it as a GitHub Release.
+# Mac-only for now — see apps/desktop/forge.config.ts's own note that
+# Windows/Linux makers aren't wired up yet.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # No .nvmrc/.node-version pin exists in this repo; root
+          # package.json only requires >=20. 22 is the current Node LTS —
+          # picked for that reason, not because anything here needs it
+          # specifically.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Root install (npm workspaces monorepo — apps/*, packages/*).
+      # apps/desktop's own `postinstall` (fix-node-pty-permissions.js) runs
+      # automatically as part of this and needs no separate step; it exists
+      # to work around an install-script allowlist specific to sandboxed dev
+      # environments, which doesn't apply here, but it's idempotent and
+      # harmless to run regardless.
+      - run: npm ci
+
+      # electron-forge publish both makes the distributable (DMG, see the
+      # maker configured in apps/desktop/forge.config.ts) and uploads it via
+      # whatever publisher is configured there. Two explicit runs, not one
+      # unqualified `publish` — a universal (arm64+x64) build was tried and
+      # confirmed broken for this app (see docs/RELEASING.md: @electron/
+      # universal fails stitching the two arch bundles together, a real
+      # Mach-O mismatch, not something worth retrying here), and macos-latest
+      # runners are arm64 — an unqualified `publish` would silently only
+      # produce the arm64 asset, leaving Intel Mac users with nothing.
+      - name: Build and publish (arm64)
+        working-directory: apps/desktop
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-forge publish --arch=arm64
+
+      - name: Build and publish (x64)
+        working-directory: apps/desktop
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-forge publish --arch=x64
