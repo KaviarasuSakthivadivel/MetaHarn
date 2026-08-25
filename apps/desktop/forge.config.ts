@@ -5,6 +5,7 @@ import { PublisherGithub } from "@electron-forge/publisher-github";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
+import { copyExternalDeps } from "./scripts/copy-external-deps.js";
 
 // Windows/Linux makers (Squirrel, deb, rpm) are intentionally not wired up
 // yet — the Vite plugin structure below already ships main/preload/renderer
@@ -12,7 +13,11 @@ import { FuseV1Options, FuseVersion } from "@electron/fuses";
 // restructure. See docs/PLAN.md.
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: true,
+    // Only node-pty needs unpacking — it ships a real native .node binary,
+    // which Electron cannot dlopen from inside a read-only asar archive.
+    // Everything else copyExternalDeps() places in node_modules (below) is
+    // plain JS and asar-safe.
+    asar: { unpack: "**/node-pty/**" },
     // Extension auto-completes per platform (.icns here on macOS). Source
     // artwork is assets/icon.svg; assets/icon.iconset/*.png + icon.icns
     // are generated from it (see docs/architecture — regenerate with
@@ -22,20 +27,41 @@ const config: ForgeConfig = {
     // unsigned. Leaving osxSign/osxNotarize absent rather than half-filled
     // with placeholder values; see docs/RELEASING.md for what real signing
     // needs and what an unsigned .dmg means for someone downloading it.
+    //
+    // afterCopy runs once apps/desktop's own files are staged into the
+    // packaged build, before asar packing — the right moment to also copy
+    // in the packages vite.main.config.ts deliberately keeps external
+    // (node-pty, @earendil-works/pi-coding-agent, and their full dependency
+    // trees). Without this, a packaged build has NONE of them: this is an
+    // npm workspaces monorepo, apps/desktop's own node_modules is nearly
+    // empty (everything real is hoisted to the repo root), and
+    // electron-packager only ever looks at the app's own node_modules.
+    // Real, reproduced bug this fixes, not a defensive guess — a genuinely
+    // installed build failed with `Cannot find package 'dotenv'` on launch
+    // before this existed. See scripts/copy-external-deps.js for the actual
+    // resolution logic.
+    afterCopy: [
+      (buildPath, _electronVersion, _platform, _arch, callback) => {
+        try {
+          copyExternalDeps(buildPath);
+          callback();
+        } catch (err) {
+          callback(err as Error);
+        }
+      },
+    ],
   },
   // node-pty already ships correct prebuilt native binaries for both
-  // darwin-x64 and darwin-arm64 (node_modules/node-pty/prebuilds/) — no
-  // rebuild-from-source is needed or wanted. Forge's default native-module
-  // rebuild step (via @electron/rebuild, which shells out to a compiler)
-  // gets killed outright by this dev sandbox's install-script/build
-  // restrictions (same restriction node-pty's own postinstall already runs
-  // into — see scripts/fix-node-pty-permissions.js): `packagerConfig`'s
-  // "Preparing native dependencies" step exited the whole process silently
-  // within under a second, before even a single architecture finished
-  // packaging, confirmed with both a plain arm64 build and a universal
-  // build — not something specific to the universal path. `onlyModules: []`
-  // tells @electron/rebuild to rebuild nothing, which is correct here since
-  // there's nothing that needs rebuilding.
+  // darwin-x64 and darwin-arm64 (node_modules/node-pty/prebuilds/), matching
+  // Electron's own ABI — no rebuild-from-source needed or wanted.
+  // `onlyModules: []` tells @electron/rebuild to rebuild nothing, since
+  // nothing here needs it. (An earlier version of this comment blamed a
+  // silent packaging failure on "sandbox restrictions" — that diagnosis was
+  // wrong. The real cause, found by actually reproducing and root-causing
+  // it: this dev machine's only installed Node (v26.5.0) was too new for
+  // several native addons in the DMG-maker's own dependency chain to build
+  // against, unrelated to node-pty or this rebuildConfig at all. See
+  // docs/RELEASING.md.)
   rebuildConfig: { onlyModules: [] },
   makers: [new MakerZIP({}, ["darwin"]), new MakerDMG({}, ["darwin"])],
   publishers: [

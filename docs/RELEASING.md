@@ -15,6 +15,34 @@ Electron Forge (`apps/desktop/forge.config.ts`) runs both `MakerZIP` and
 matching `.zip`. `MakerDMG`'s config is left at its defaults (`{}`) — no
 custom background/icon layout configured yet.
 
+**A real, shipped-then-caught packaging bug worth knowing about**: this is
+an npm workspaces monorepo, and `apps/desktop`'s own `node_modules` is
+nearly empty — everything real is hoisted to the repo root instead.
+electron-packager only ever looks at the app's own `node_modules` when
+assembling a build, so any real npm dependency the Vite main-process build
+doesn't bundle (see `vite.main.config.ts`'s `rollupOptions.external` —
+`dotenv`, `drizzle-orm`, `typebox`, `node-pty`,
+`@earendil-works/pi-coding-agent`) was completely absent from the first
+`.dmg` built this way: a genuinely installed copy crashed on launch with
+`Cannot find package 'dotenv'`. Bundling `dotenv` directly instead of
+externalizing it was tried next and also failed differently — its own
+source calls `require("fs")` internally, which throws at runtime in this
+project's forced-ESM main-process output (`Calling require for "fs" in an
+environment that doesn't expose the require function`, from a real crash on
+a real launch, not a guess). `apps/desktop/scripts/copy-external-deps.js`
+is the actual fix: a `forge.config.ts` `afterCopy` hook that resolves the
+full production dependency closure of every externalized package (manual
+`node_modules` walk, not `require.resolve` — `pi-coding-agent` and several
+of its own dependencies are pure ESM with no `require` export condition)
+and copies it into the packaged build directly. `node-pty` additionally
+needs `packagerConfig.asar.unpack` (already configured) since its native
+`.node` binary can't be loaded from inside a read-only asar archive.
+Verified by actually launching the packaged binary directly
+(`out/MetaHarn-darwin-*/MetaHarn.app/Contents/MacOS/MetaHarn` from a
+terminal, not just double-clicking) and confirming `renderer
+did-finish-load` with a real Electron process family (main + GPU + renderer
++ network helpers) and no crash, not just that the `.dmg` mounts.
+
 **Universal (arm64+x64) builds don't work for this app — confirmed, not
 just untried**: `npx electron-forge make --arch=universal` packages both
 architectures successfully, then fails at the final stitching step

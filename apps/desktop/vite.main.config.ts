@@ -15,23 +15,27 @@ export default defineConfig({
       formats: ["es"],
     },
     rollupOptions: {
-      // Keep real npm dependencies external and let Node's own module
-      // resolution handle them at runtime instead of Rollup bundling them
-      // in. @metaharn/context-engine and @metaharn/db are NOT included here —
-      // they're uncompiled TypeScript workspace packages (always run via
-      // tsx's loader until now), and Node's native ESM loader can't resolve
-      // their ".js"-suffixed relative imports against .ts source files the
-      // way tsx does. Letting Rollup bundle them directly (it compiles their
-      // TS itself) sidesteps that entirely.
-      external: [
-        "dotenv",
-        "dotenv/config",
-        "drizzle-orm",
-        "typebox",
-        "@earendil-works/pi-coding-agent",
-        // Native module (ships prebuilt .node binaries) — cannot be bundled.
-        "node-pty",
-      ],
+      // Real npm dependencies stay external and get physically copied into
+      // a packaged build's node_modules by forge.config.ts's afterCopy hook
+      // (see scripts/copy-external-deps.js) instead of being bundled here.
+      //
+      // Tried bundling dotenv directly first (plain JS, no native bindings —
+      // looked safe) since that removes the runtime node_modules dependency
+      // entirely for packages that support it. It isn't safe: dotenv's own
+      // source calls `require("fs")` internally, and Rolldown's CJS-interop
+      // shim for that only works if a real `require` exists at runtime —
+      // which it doesn't in this file, forced to real ESM output (see the
+      // comment above) for @earendil-works/pi-coding-agent's sake. Confirmed
+      // by actually launching the packaged app: `Uncaught Exception: Error:
+      // Calling require for "fs" in an environment that doesn't expose the
+      // require function`, thrown from dotenv's own bundled code. Reverted
+      // rather than risk the same failure mode in drizzle-orm/typebox too —
+      // copy-external-deps.js's file-copy approach has none of this risk
+      // for any of these, so all real dependencies use it uniformly now.
+      //
+      // node-pty additionally ships a native .node binary that could never
+      // have been bundled by Rollup/Rolldown in the first place.
+      external: ["dotenv", "dotenv/config", "drizzle-orm", "typebox", "@earendil-works/pi-coding-agent", "node-pty"],
     },
   },
 });
