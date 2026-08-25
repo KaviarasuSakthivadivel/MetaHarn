@@ -1,7 +1,7 @@
 {
   "name": "metaharn",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Meta-harness for an agentic dev platform: institutional-memory context grounding on top of an embedded agent harness.",
   "workspaces": [
     "apps/*",

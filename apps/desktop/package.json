@@ -2,7 +2,7 @@
   "name": "@metaharn/desktop",
   "productName": "MetaHarn",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "description": "MetaHarn native desktop app — Electron shell embedding the Pi-based agent runtime.",
   "main": ".vite/build/main.js",
