@@ -1,0 +1,277 @@
+/* "metaharn" (橙) — bitter-orange citrus, the project's namesake accent. */
+
+:root {
+  --color-bg: #ffffff;
+  --color-bg-secondary: #f7f6f3;
+  --color-bg-elevated: #ffffff;
+  --color-bg-hover: #f0ede7;
+  --color-border: #e6e1d8;
+  --color-text: #1c1712;
+  --color-text-secondary: #6b6259;
+  --color-text-muted: #a39a8c;
+  --color-accent: #e0630f;
+  --color-accent-hover: #c8560c;
+  --color-accent-soft: #fdf0e4;
+  --color-user-bubble: #1c1712;
+  --color-user-bubble-text: #ffffff;
+  --color-tool-bubble: #f0ede7;
+  --color-error: #b3402f;
+  --color-error-soft: #fbeae7;
+  --color-editor-bg: #ffffff;
+  /* Session status dots (Sidebar.tsx) — distinct from --color-accent so
+     "working" doesn't visually collide with the selected/active-row tint. */
+  --color-status-working: #3a8a4c;
+  --color-status-waiting: #d9a441;
+  --color-status-idle: #a39a8c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #17140f;
+    --color-bg-secondary: #1e1911;
+    --color-bg-elevated: #241e15;
+    --color-bg-hover: #2b2417;
+    --color-border: #382e1e;
+    --color-text: #f2ece2;
+    --color-text-secondary: #b7ac98;
+    --color-text-muted: #7d7261;
+    --color-accent: #f2823f;
+    --color-accent-hover: #f6975c;
+    --color-accent-soft: #362317;
+    --color-user-bubble: #f2ece2;
+    --color-user-bubble-text: #17140f;
+    --color-tool-bubble: #241e15;
+    --color-error: #e08574;
+    --color-error-soft: #362017;
+    --color-editor-bg: #1e1911;
+    --color-status-working: #5cb86f;
+    --color-status-waiting: #e0b85a;
+    --color-status-idle: #7d7261;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #17140f;
+  --color-bg-secondary: #1e1911;
+  --color-bg-elevated: #241e15;
+  --color-bg-hover: #2b2417;
+  --color-border: #382e1e;
+  --color-text: #f2ece2;
+  --color-text-secondary: #b7ac98;
+  --color-text-muted: #7d7261;
+  --color-accent: #f2823f;
+  --color-accent-hover: #f6975c;
+  --color-accent-soft: #362317;
+  --color-user-bubble: #f2ece2;
+  --color-user-bubble-text: #17140f;
+  --color-tool-bubble: #241e15;
+  --color-error: #e08574;
+  --color-error-soft: #362017;
+  --color-editor-bg: #1e1911;
+  --color-status-working: #5cb86f;
+  --color-status-waiting: #e0b85a;
+  --color-status-idle: #7d7261;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family:
+    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+}
+
+input {
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+button.metaharn-btn-primary {
+  background: var(--color-accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+button.metaharn-btn-primary:hover {
+  background: var(--color-accent-hover);
+}
+button.metaharn-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Hover lift for card-style rows (project list, etc.) — inline styles can't
+   express :hover, so this is the minimal CSS needed for that one thing. */
+.metaharn-card-row {
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.metaharn-card-row:hover {
+  border-color: var(--color-accent);
+  background: var(--color-bg-hover);
+}
+
+.metaharn-icon-btn {
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.metaharn-icon-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+/* The sidebar's resize handle (App.tsx) — its "actively dragging" state is
+   inline (needs to stay lit even once the cursor outruns the thin 5px
+   strip), this just covers plain hover discoverability before a drag
+   starts. */
+.metaharn-resize-handle:hover {
+  background: var(--color-accent);
+}
+
+/* Sidebar session-card action icons (Fork / Worktree / Dependency / Delete)
+   — hidden until the row (or the cluster itself, for keyboard focus) is
+   hovered, so a card stays clean at rest instead of a permanent icon row. */
+.metaharn-hover-actions {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.metaharn-card-row:hover .metaharn-hover-actions,
+.metaharn-session-card:hover .metaharn-hover-actions,
+.metaharn-hover-actions:focus-within {
+  opacity: 1;
+}
+
+/* Sidebar session cards (Sidebar.tsx's SessionCard) — border/background/
+   radius live HERE, as real stylesheet properties, specifically so :hover
+   can override them. They used to be set inline via React `style`, and an
+   inline style value always wins the CSS cascade over ANY stylesheet rule
+   for that same property — :hover included — with no exception short of
+   !important. That silently neutered `.metaharn-card-row:hover`'s border/
+   background shift on every card that set those properties inline
+   (this one included): the rule existed, matched, and never once visually
+   applied. Selection state (`.metaharn-session-card-active`) is now a
+   modifier class instead of an inline color for the same reason — it needs
+   to coexist with :hover's own border/background without one silently
+   blocking the other via inline precedence. border-radius mirrors
+   ui.tsx's RADIUS.md (8) — keep them in sync if that token ever changes. */
+.metaharn-session-card {
+  position: relative;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+}
+.metaharn-session-card.metaharn-session-card-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+.metaharn-session-card:hover {
+  border-color: var(--color-accent);
+  background: var(--color-bg-hover);
+}
+/* A left accent bar on top of the border/background shift — a stronger,
+   harder-to-miss "this row is highlighted" signal than a 1px border color
+   change alone, which is what the user pointed at as too subtle to
+   register at a glance. Stays lit permanently (not just on :hover) for
+   the active/selected session, so selection remains legible mid-hover of
+   a DIFFERENT row too. */
+.metaharn-session-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--color-accent);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.metaharn-session-card:hover::before,
+.metaharn-session-card.metaharn-session-card-active::before {
+  opacity: 1;
+}
+
+/* Drag-to-reorder grip (Sidebar.tsx) — same hidden-until-hovered treatment
+   as .metaharn-hover-actions, just anchored at the card's left edge instead
+   of the top-right action cluster. */
+.metaharn-drag-handle {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.metaharn-session-card:hover .metaharn-drag-handle,
+.metaharn-drag-handle:focus-visible {
+  opacity: 1;
+}
+
+/* Custom tooltip for icon-only buttons (no visible label to hover-read) —
+   reads its text from `aria-label` (keeps real accessibility semantics)
+   rather than the native `title` attribute, whose unstyled OS tooltip and
+   long show-delay read as "broken" next to the rest of this app's chrome.
+   Right-aligned, not centered: most callers sit near the sidebar's right
+   edge, inside an `overflow-y: auto` container that also clips the x-axis
+   — growing left from the trigger's own right edge is what keeps the
+   tooltip from being cut off instead of overflowing past view. */
+.metaharn-tooltip {
+  position: relative;
+}
+.metaharn-tooltip::after {
+  content: attr(aria-label);
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 5px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  pointer-events: none;
+  z-index: 30;
+}
+.metaharn-tooltip:hover::after {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0.25s;
+}
+
+/* Session status dot (Sidebar.tsx) — a slow breathing pulse for genuinely
+   live states (Working / Active) only; Waiting/Idle/Exited stay static, so
+   motion itself carries meaning instead of being decorative. */
+@media (prefers-reduced-motion: no-preference) {
+  .metaharn-status-pulse {
+    animation: metaharn-pulse 1.8s ease-in-out infinite;
+  }
+}
+@keyframes metaharn-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}

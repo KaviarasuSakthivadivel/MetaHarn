@@ -1,0 +1,23 @@
+{
+  "name": "metaharn",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Meta-harness for an agentic dev platform: institutional-memory context grounding on top of an embedded agent harness.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:desktop": "npm run start --workspace=apps/desktop",
+    "db:migrate": "npm run migrate --workspace=packages/db"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "vite": "^8.2.1"
+  },
+  "overrides": {
+    "@electron/rebuild": "^4.2.0"
+  }
+}

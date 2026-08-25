@@ -1,0 +1,23 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- macOS Big Sur+ style continuous-corner squircle background, inset to
+       Apple's own documented icon-grid spec (824x824 content area within
+       the 1024x1024 canvas, 100px margin per side, 185.4 corner radius) —
+       previously this filled the full 1024 canvas edge-to-edge with no
+       margin at all, which is exactly why it read visibly larger/bolder
+       than every correctly-inset icon next to it in the Dock. -->
+  <rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4" fill="#FCEEE0"/>
+
+  <!-- Concentric rings — abstract, not a literal fruit illustration. Reads
+       as tree rings / growth, which ties to metaharn's actual etymology
+       (橙, a pun on 代々 "generation to generation") rather than drawing
+       the fruit itself. Chosen over four other directions (a citrus
+       cross-section, a plain "D" monogram, a flatter whole-fruit-and-leaf,
+       and a knowledge-graph node cluster) — see docs/architecture/07-frontend.md.
+       Radii scaled by the same 824/1024 ratio as the squircle inset above,
+       so the composition is identical, just correctly sized within it. -->
+  <circle cx="512" cy="512" r="321" fill="#FFD9A8"/>
+  <circle cx="512" cy="512" r="247" fill="#FFB35C"/>
+  <circle cx="512" cy="512" r="177" fill="#F2823F"/>
+  <circle cx="512" cy="512" r="111" fill="#E0630F"/>
+  <circle cx="512" cy="512" r="49" fill="#A83D0C"/>
+</svg>

@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: metaharn
+      POSTGRES_PASSWORD: metaharn
+      POSTGRES_DB: metaharn
+    ports:
+      - "5432:5432"
+    volumes:
+      - metaharn_pgdata:/var/lib/postgresql/data
+
+volumes:
+  metaharn_pgdata:
