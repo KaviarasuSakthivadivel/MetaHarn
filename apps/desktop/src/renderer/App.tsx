@@ -710,20 +710,31 @@ export default function App() {
   /**
    * Reversible, unlike deleteSession above — never touches the real JSONL
    * file or a live pty, purely a visibility flag (see catalog.ts's
-   * archiveSession doc comment). No confirmation needed for exactly that
-   * reason. Archiving the session currently being viewed has the same
-   * "now what's shown" question deleting it does, so it gets the same
+   * archiveSession doc comment), and un-archiving is one click from
+   * ProjectOverview's ARCHIVED SESSIONS section. Still asks first: a
+   * session dropping out of the normal list is a real, easy-to-regret-
+   * for-a-second surprise even when it's cheap to undo, same
+   * pendingConfirm/ConfirmDialog pattern deleteSession above uses.
+   * Archiving the session currently being viewed has the same "now what's
+   * shown" question deleting it does, so it gets the same
    * navigate-away-to-Overview answer.
    */
   const archiveSession = (session: SessionListItem) => {
     const isTerminal = session.type === "terminal";
-    void window.metaharn.archiveSession(session.id).then(() => {
-      refreshSessions();
-      const current = viewRef.current;
-      const isActive = isTerminal
-        ? current.kind === "terminal" && current.terminalSessionId === session.id
-        : current.kind === "session" && current.sessionPath === session.path;
-      if (isActive) setView({ kind: "project", cwd: session.cwd, tab: "overview" });
+    setPendingConfirm({
+      message: "Archive this session?",
+      details: "Hides it from the normal list — nothing is deleted, and you can unarchive it any time from Overview.",
+      onConfirm: () => {
+        setPendingConfirm(null);
+        void window.metaharn.archiveSession(session.id).then(() => {
+          refreshSessions();
+          const current = viewRef.current;
+          const isActive = isTerminal
+            ? current.kind === "terminal" && current.terminalSessionId === session.id
+            : current.kind === "session" && current.sessionPath === session.path;
+          if (isActive) setView({ kind: "project", cwd: session.cwd, tab: "overview" });
+        });
+      },
     });
   };
 
@@ -1227,6 +1238,7 @@ export default function App() {
                 onOpenSession={openSession}
                 onNewChatSession={() => newChatSession(view.cwd)}
                 onNewTerminalSession={(agentKind) => newTerminalSession(view.cwd, agentKind)}
+                onGoToSettings={() => setView({ kind: "settings" })}
                 onArchiveSession={archiveSession}
                 onDeleteSession={deleteSession}
                 onResumeArchivedSession={resumeArchivedSession}

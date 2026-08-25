@@ -18,6 +18,8 @@ interface ProjectOverviewProps {
   onOpenSession: (session: SessionListItem) => void;
   onNewChatSession: () => void;
   onNewTerminalSession: (agentKind: AgentKind) => void;
+  /** The AgentPickerMenu's Install link for a not-yet-installed agent. */
+  onGoToSettings: () => void;
   /** Reversible — hides a normal session card into the ARCHIVED SESSIONS
    * section below without touching its real file/pty. */
   onArchiveSession: (session: SessionListItem) => void;
@@ -52,6 +54,7 @@ export default function ProjectOverview({
   onOpenSession,
   onNewChatSession,
   onNewTerminalSession,
+  onGoToSettings,
   onArchiveSession,
   onDeleteSession,
   onResumeArchivedSession,
@@ -326,8 +329,8 @@ export default function ProjectOverview({
                 style={{
                   padding: "6px 12px",
                   border: "1px solid var(--color-border)",
-                  borderRight: installedAgents.length > 1 ? "none" : undefined,
-                  borderRadius: installedAgents.length > 1 ? `${RADIUS.md}px 0 0 ${RADIUS.md}px` : RADIUS.md,
+                  borderRight: "none",
+                  borderRadius: `${RADIUS.md}px 0 0 ${RADIUS.md}px`,
                   background: "transparent",
                   cursor: installedAgents.length === 0 ? "default" : "pointer",
                   color: installedAgents.length === 0 ? "var(--color-text-muted)" : "var(--color-text-secondary)",
@@ -340,29 +343,38 @@ export default function ProjectOverview({
               >
                 <PlusIcon size={12} /> New terminal
               </button>
-              {installedAgents.length > 1 && (
-                <button
-                  onClick={() => setShowAgentPicker(true)}
-                  aria-label="Choose a different agent for this session"
-                  className="metaharn-tooltip"
-                  style={{
-                    padding: `0 ${SPACE.sm}px`,
-                    border: "1px solid var(--color-border)",
-                    borderRadius: `0 ${RADIUS.md}px ${RADIUS.md}px 0`,
-                    background: "transparent",
-                    cursor: "pointer",
-                    color: "var(--color-text-secondary)",
-                  }}
-                >
-                  ▾
-                </button>
-              )}
+              {/* Always reachable, even with zero or one agent installed —
+                  this is the one place a user can discover and install the
+                  OTHER agent CLIs (see AgentPickerMenu, which now lists every
+                  known kind with an Install link, not just installed ones).
+                  Previously gated behind installedAgents.length > 1, which
+                  meant a single-agent machine had no way to even see that
+                  other harnesses existed from here. */}
+              <button
+                onClick={() => setShowAgentPicker(true)}
+                aria-label="Choose an agent for this session"
+                className="metaharn-tooltip"
+                style={{
+                  padding: `0 ${SPACE.sm}px`,
+                  border: "1px solid var(--color-border)",
+                  borderRadius: `0 ${RADIUS.md}px ${RADIUS.md}px 0`,
+                  background: "transparent",
+                  cursor: "pointer",
+                  color: "var(--color-text-secondary)",
+                }}
+              >
+                ▾
+              </button>
               {showAgentPicker && (
                 <AgentPickerMenu
-                  agents={installedAgents}
+                  installedKinds={installedAgents.map((a) => a.kind)}
                   onPick={(kind) => {
                     setShowAgentPicker(false);
                     onNewTerminalSession(kind);
+                  }}
+                  onGoToInstall={() => {
+                    setShowAgentPicker(false);
+                    onGoToSettings();
                   }}
                   onClose={() => setShowAgentPicker(false)}
                 />
