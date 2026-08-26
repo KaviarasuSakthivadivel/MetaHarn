@@ -1,7 +1,9 @@
 import { existsSync, statSync } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { ApprovalOutcome } from "@metaharn/engine";
 import { createMetaHarnSession, getModelConfig, type MetaHarnSession } from "./agent.js";
+import { createOwnedEngineSession, ownedEngineEnabled, type OwnedEngineSession } from "./ownedEngine.js";
 import { closePty, setPendingSeedPrompt } from "./pty-ipc.js";
 import { generateHandoffSummary } from "./agents/handoff.js";
 import { getTerminalSessionStats } from "./terminal-stats.js";
@@ -59,13 +61,16 @@ import {
 } from "./git.js";
 import { createWorktree } from "./worktree.js";
 
-interface WindowSession {
-  session: MetaHarnSession;
-  sessionManager: SessionManager;
-  unsubscribe: () => void;
-}
+// Two backends share one window slot: "pi" is the original, embedded-SDK path
+// (createMetaHarnSession); "owned" is MetaHarn's own engine (ownedEngine.ts), selected via
+// METAHARN_CHAT_ENGINE=owned — see docs/research/openworker-integration.md. Kept as a
+// discriminated union rather than a unifying interface so every existing Pi call site below
+// stays byte-for-byte unchanged; only the owned branch is new.
+type WindowSession =
+  | { kind: "pi"; session: MetaHarnSession; sessionManager: SessionManager; unsubscribe: () => void }
+  | { kind: "owned"; session: OwnedEngineSession; unsubscribe: () => void };
 
-// Keyed by webContents.id — one Pi session per window, mirroring the old
+// Keyed by webContents.id — one chat session per window, mirroring the old
 // one-session-per-WebSocket-connection model.
 const sessionsByWindow = new Map<number, WindowSession>();
 
@@ -73,19 +78,23 @@ function pushEvent(sender: WebContents, payload: unknown) {
   if (!sender.isDestroyed()) sender.send("metaharn:event", payload);
 }
 
-async function runTurn(sender: WebContents, run: (session: MetaHarnSession) => Promise<void>) {
+async function runTurn(sender: WebContents, run: (session: MetaHarnSession | OwnedEngineSession) => Promise<void>) {
   const entry = sessionsByWindow.get(sender.id);
   if (!entry) {
     pushEvent(sender, { type: "error", message: "Send an init message before prompting" });
     return;
   }
   await run(entry.session);
-  // The agent can finish a turn without throwing (e.g. a provider-level
-  // rejection like insufficient credits) — session.agent.state carries that
-  // instead of the run promise rejecting, so it needs its own forwarding
-  // path rather than relying on the catch block below.
-  if (entry.session.agent.state.errorMessage) {
-    pushEvent(sender, { type: "error", message: entry.session.agent.state.errorMessage });
+  // Both backends can finish a turn without throwing (e.g. a provider-level rejection like
+  // insufficient credits) and carry that as a side channel instead — Pi via
+  // session.agent.state, the owned engine via its own errorMessage field — so each needs its
+  // own forwarding path rather than relying on the catch block below.
+  if (entry.kind === "pi") {
+    if (entry.session.agent.state.errorMessage) {
+      pushEvent(sender, { type: "error", message: entry.session.agent.state.errorMessage });
+    }
+  } else if (entry.session.errorMessage) {
+    pushEvent(sender, { type: "error", message: entry.session.errorMessage });
   }
 }
 
@@ -119,6 +128,23 @@ export function registerIpcHandlers() {
 
         disposeSessionFor(sender.id);
 
+        if (ownedEngineEnabled()) {
+          // No durable transcript yet for this backend (see ownedEngine.ts's module doc) —
+          // resumeSessionPath is accepted but ignored; every owned-engine session starts
+          // fresh. A real resume story is deliberate later work, not an oversight.
+          const session = createOwnedEngineSession(repoPath);
+          const unsubscribe = session.subscribe((e) => pushEvent(sender, e));
+          sessionsByWindow.set(sender.id, { kind: "owned", session, unsubscribe });
+
+          const { org, repo } = await ensureOrgAndRepo(repoPath);
+          recordSession(session.sessionId, org.id, repo.id).catch((err) =>
+            console.warn("[metaharn] catalog write failed:", (err as Error).message),
+          );
+
+          pushEvent(sender, { type: "ready", sessionId: session.sessionId, history: [] });
+          return;
+        }
+
         const { session, sessionManager, orgId, repoId } = await createMetaHarnSession(repoPath, {
           resumeSessionPath,
         });
@@ -150,7 +176,7 @@ export function registerIpcHandlers() {
           }
         });
 
-        sessionsByWindow.set(sender.id, { session, sessionManager, unsubscribe });
+        sessionsByWindow.set(sender.id, { kind: "pi", session, sessionManager, unsubscribe });
 
         recordSession(session.sessionId, orgId, repoId).catch((err) =>
           console.warn("[metaharn] catalog write failed:", (err as Error).message),
@@ -467,6 +493,17 @@ export function registerIpcHandlers() {
     await sessionsByWindow.get(event.sender.id)?.session.abort();
   });
 
+  // Owned-engine only — resolves a PERMISSION_REQUIRED prompt the renderer showed. A no-op
+  // for a Pi-backed session, or if the id doesn't match a still-pending approval (e.g. the
+  // window was closed and reopened after a permission prompt was already answered/dropped).
+  ipcMain.handle(
+    "metaharn:resolvePermission",
+    (event: IpcMainInvokeEvent, toolCallId: string, outcome: ApprovalOutcome) => {
+      const entry = sessionsByWindow.get(event.sender.id);
+      if (entry?.kind === "owned") entry.session.resolvePermission(toolCallId, outcome);
+    },
+  );
+
   ipcMain.handle("metaharn:pickDirectory", async (event: IpcMainInvokeEvent) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     const result = window
@@ -477,7 +514,10 @@ export function registerIpcHandlers() {
 
   ipcMain.handle("metaharn:getSessionTree", (event: IpcMainInvokeEvent) => {
     const entry = sessionsByWindow.get(event.sender.id);
-    if (!entry) return [];
+    // No session-tree concept for the owned engine yet (no persistence at all in this pass —
+    // see ownedEngine.ts) — an empty tree, not an error, matches how the renderer already
+    // treats "nothing to show here" for other panels.
+    if (!entry || entry.kind !== "pi") return [];
     // Pure read of the manager's tree structure — safe to call directly,
     // unlike branching (see below), which goes through AgentSession instead.
     return treeToDTO(entry.sessionManager.getTree());
@@ -486,7 +526,7 @@ export function registerIpcHandlers() {
   ipcMain.handle("metaharn:branchSession", async (event: IpcMainInvokeEvent, entryId: string) => {
     const sender = event.sender;
     const entry = sessionsByWindow.get(sender.id);
-    if (!entry) return;
+    if (!entry || entry.kind !== "pi") return;
     try {
       // Goes through AgentSession.navigateTree() rather than calling
       // sessionManager.branch() directly — the manager's leaf pointer isn't
@@ -506,16 +546,20 @@ export function registerIpcHandlers() {
 
   ipcMain.handle("metaharn:getSessionStats", (event: IpcMainInvokeEvent) => {
     const entry = sessionsByWindow.get(event.sender.id);
+    // No SessionStats equivalent for the owned engine yet (no token-usage accounting wired
+    // up in this pass) — ContextWindowPanel already renders `null` as "—", the same
+    // treatment a session with no stats yet gets today.
+    if (!entry || entry.kind !== "pi") return null;
     // getSessionStats() aggregates over ALL entries including compacted-away
     // history (token/cost totals reflect what was actually billed), and its
     // contextUsage field is specifically the *latest turn's* context size —
     // the two numbers answer different questions, both shown in the panel.
-    return entry?.session.getSessionStats() ?? null;
+    return entry.session.getSessionStats() ?? null;
   });
 
   ipcMain.handle("metaharn:forkChatSession", (event: IpcMainInvokeEvent) => {
     const entry = sessionsByWindow.get(event.sender.id);
-    if (!entry) return null;
+    if (!entry || entry.kind !== "pi") return null;
     // Pi's real fork() (new session file + runtime swap) lives on
     // AgentSessionRuntime, an object MetaHarn never adopted — createAgentSession
     // is used directly instead (see agent.ts). SessionManager's own

@@ -8,6 +8,10 @@ export { defaultStream } from "./providers/base.js";
 export type { ProviderClient } from "./providers/base.js";
 export { ToolRegistry } from "./tools/registry.js";
 
+// -- Base tools (not in the OpenWorker catalog — see tools/files.ts's module doc) -----------
+export * from "./tools/files.js";
+export * from "./tools/shell.js";
+
 // -- Tier 1: built-in tools ---------------------------------------------------------------
 export * from "./tools/search.js";
 export * from "./tools/git.js";

@@ -34,8 +34,18 @@ export default defineConfig({
       // for any of these, so all real dependencies use it uniformly now.
       //
       // node-pty additionally ships a native .node binary that could never
-      // have been bundled by Rollup/Rolldown in the first place.
-      external: ["dotenv", "dotenv/config", "drizzle-orm", "typebox", "@earendil-works/pi-coding-agent", "node-pty"],
+      // have been bundled by Rollup/Rolldown in the first place. better-sqlite3
+      // (pulled in transitively by @metaharn/engine's automation/memory/trust
+      // modules) is the same class of dependency for the same reason.
+      external: [
+        "dotenv",
+        "dotenv/config",
+        "drizzle-orm",
+        "typebox",
+        "@earendil-works/pi-coding-agent",
+        "node-pty",
+        "better-sqlite3",
+      ],
     },
   },
 });

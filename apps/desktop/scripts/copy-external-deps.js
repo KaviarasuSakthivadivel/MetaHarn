@@ -95,7 +95,14 @@ export function copyExternalDeps(buildPath, platform, arch) {
   // a packaged build (see that file's comment for why bundling dotenv
   // directly was tried and reverted; drizzle-orm/typebox were never tried
   // since the same CJS/ESM interop risk applies to any real npm package).
-  const EXTERNAL_ROOTS = ["dotenv", "drizzle-orm", "typebox", "node-pty", "@earendil-works/pi-coding-agent"];
+  const EXTERNAL_ROOTS = [
+    "dotenv",
+    "drizzle-orm",
+    "typebox",
+    "node-pty",
+    "@earendil-works/pi-coding-agent",
+    "better-sqlite3",
+  ];
   const { resolvedDirs, missing } = collectClosure(EXTERNAL_ROOTS, REPO_ROOT);
 
   // Optional platform-specific native-binary packages (e.g.

@@ -5,12 +5,20 @@ export interface HistoryMessage {
   text: string;
 }
 
+/** What a client should do about one pending approval — mirrors @metaharn/engine's
+ * ApprovalOutcome (the owned-engine backend's PermissionEngine understands all of these;
+ * "once" is the only one a bare Approve/Deny UI needs to send). */
+export type ApprovalOutcome = "once" | "always_tool" | "always_command" | "always_domain" | "readonly_session" | "deny";
+
 export type MetaHarnEvent =
   | { type: "ready"; sessionId: string; history: HistoryMessage[] }
   | { type: "text_delta"; delta: string }
   | { type: "thinking_delta"; delta: string }
   | { type: "tool_start"; toolCallId: string; toolName: string; args: unknown }
   | { type: "tool_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
+  // Owned-engine backend only (METAHARN_CHAT_ENGINE=owned) — Pi never emits this; its own
+  // approval flow, if any, is internal to the SDK. See ownedEngine.ts.
+  | { type: "permission_required"; toolCallId: string; toolName: string; args: unknown; reason: string }
   | { type: "agent_end" }
   | { type: "error"; message: string };
 
@@ -224,6 +232,10 @@ const metaharnBridge = {
   listArchivedSessions: (cwd?: string): Promise<ArchivedSessionItem[]> =>
     ipcRenderer.invoke("metaharn:listArchivedSessions", cwd),
   abort: (): Promise<void> => ipcRenderer.invoke("metaharn:abort"),
+  /** Answers a "permission_required" event from the owned-engine backend. A no-op for a
+   * Pi-backed session. */
+  resolvePermission: (toolCallId: string, outcome: ApprovalOutcome): Promise<void> =>
+    ipcRenderer.invoke("metaharn:resolvePermission", toolCallId, outcome),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke("metaharn:pickDirectory"),
   getSessionTree: (): Promise<SessionTreeNode[]> => ipcRenderer.invoke("metaharn:getSessionTree"),
   branchSession: (entryId: string): Promise<void> => ipcRenderer.invoke("metaharn:branchSession", entryId),

@@ -19,6 +19,7 @@ import FilesPane from "./FilesPane.js";
 import TerminalPane from "./TerminalPane.js";
 import SettingsPage from "./SettingsPage.js";
 import ConfirmDialog from "./ConfirmDialog.js";
+import PermissionPrompt, { type PendingPermission } from "./PermissionPrompt.js";
 import SessionTreeView from "./SessionTreeView.js";
 import ContextWindowPanel from "./ContextWindowPanel.js";
 import GitPanel from "./GitPanel.js";
@@ -90,6 +91,11 @@ export default function App() {
     details?: React.ReactNode;
     onConfirm: () => void;
   } | null>(null);
+  // Owned-engine backend only (METAHARN_CHAT_ENGINE=owned) — a "permission_required" event
+  // parks here until the user answers; a Pi-backed session never sets this. Deliberately
+  // separate from pendingConfirm: dismissing this must DENY the engine's pending approval,
+  // not just close the dialog, which pendingConfirm's shared onCancel doesn't do.
+  const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
   const [showTree, setShowTree] = useState(false);
   const [sessionTree, setSessionTree] = useState<SessionTreeNode[]>([]);
   const [showContext, setShowContext] = useState(false);
@@ -416,6 +422,14 @@ export default function App() {
             // silently drop the event, just append instead of updating in place.
             if (idx === -1) return [...prev, updated];
             return [...prev.slice(0, idx), updated, ...prev.slice(idx + 1)];
+          });
+          break;
+        case "permission_required":
+          setPendingPermission({
+            toolCallId: data.toolCallId,
+            toolName: data.toolName,
+            args: data.args,
+            reason: data.reason,
           });
           break;
         case "agent_end":
@@ -1858,6 +1872,16 @@ export default function App() {
           details={pendingConfirm.details}
           onConfirm={pendingConfirm.onConfirm}
           onCancel={() => setPendingConfirm(null)}
+        />
+      )}
+
+      {pendingPermission && (
+        <PermissionPrompt
+          request={pendingPermission}
+          onResolve={(outcome) => {
+            void window.metaharn.resolvePermission(pendingPermission.toolCallId, outcome);
+            setPendingPermission(null);
+          }}
         />
       )}
     </div>
