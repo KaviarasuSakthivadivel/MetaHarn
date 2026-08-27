@@ -25,6 +25,7 @@ import type {
   EngineEvent,
   PermissionEvaluator,
   Reviewer,
+  TokenUsage,
   ToolCall,
   ToolCallWire,
 } from "./types.js";
@@ -55,6 +56,10 @@ export interface EngineOptions {
 
 export class Engine {
   readonly messages: ChatMessage[];
+  /** Running total across every model round-trip this session has made. Mutated in place
+   * (like `messages`) rather than reassigned, so a caller that grabbed a reference early sees
+   * live updates. */
+  readonly usage: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   private readonly provider: ProviderClient;
   private readonly registry: ToolRegistry;
   private readonly permissions: PermissionEvaluator;
@@ -120,6 +125,7 @@ export class Engine {
     this.cancelled = false;
     this.reviewerDenials = 0;
     yield { type: "turn_start", input: userInput };
+    yield { type: "user_message", index: this.messages.length - 1, text: userInput };
     yield* this.loop();
   }
 
@@ -176,8 +182,18 @@ export class Engine {
 
       if (this.compaction) {
         const compacted = await this.compaction(this.messages);
-        this.messages.length = 0;
-        this.messages.push(...compacted);
+        // A no-op compaction is documented (compaction.ts) to signal "nothing changed" by
+        // returning the SAME array reference it was given. Reproduced live: truncating
+        // `this.messages` in place and then re-pushing from `compacted` is only safe when
+        // they're different arrays — when a hook returns the identical reference, `.length =
+        // 0` truncates both (there is only one array), so `compacted` is already empty by the
+        // time `.push(...compacted)` runs, silently wiping the entire session history on the
+        // very next no-op compaction check. Skip the swap entirely when there's nothing to
+        // apply, instead of asking every current and future CompactionHook to avoid this.
+        if (compacted !== this.messages) {
+          this.messages.length = 0;
+          this.messages.push(...compacted);
+        }
       }
 
       this.abortController = new AbortController();
@@ -193,6 +209,14 @@ export class Engine {
       }
       for (const delta of deltas) yield delta;
 
+      if (turn.usage) {
+        this.usage.input += turn.usage.input;
+        this.usage.output += turn.usage.output;
+        this.usage.cacheRead += turn.usage.cacheRead;
+        this.usage.cacheWrite += turn.usage.cacheWrite;
+        yield { type: "usage", usage: turn.usage, total: { ...this.usage } };
+      }
+
       if (this.cancelled) {
         yield { type: "turn_end", status: "interrupted", iterations };
         return;
@@ -205,12 +229,13 @@ export class Engine {
         ...(turn.reasoning ? { reasoning: turn.reasoning } : {}),
         ...(turn.extras ?? {}),
       });
-      yield { type: "assistant_message", text: turn.text ?? "", reasoning: turn.reasoning };
+      yield { type: "assistant_message", text: turn.text ?? "", reasoning: turn.reasoning, index: this.messages.length - 1 };
 
       if (turn.toolCalls.length === 0) {
         if (this.steeringQueue.length > 0) {
           const next = this.steeringQueue.shift()!;
           this.messages.push({ role: "user", content: next, ts: Date.now() });
+          yield { type: "user_message", index: this.messages.length - 1, text: next };
           continue;
         }
         yield { type: "turn_end", status: "completed", iterations };
@@ -328,6 +353,21 @@ export class Engine {
       if (outcome === "deny") {
         this.appendToolError(call, "denied by user");
         continue;
+      }
+      // Record the session grant a richer outcome asked for — PermissionEngine.evaluate()
+      // already consults sessionAllowTools/sessionAllowCommands/sessionAllowDomains/
+      // sessionReadonly on every subsequent call; this is the only piece that was missing
+      // (the setters existed, nothing ever called them). "once" needs no grant.
+      if (outcome === "always_tool") {
+        this.permissions.allowToolForSession(call.name);
+      } else if (outcome === "always_command") {
+        const command = typeof call.arguments.command === "string" ? call.arguments.command : undefined;
+        if (command) this.permissions.allowCommandForSession(command);
+      } else if (outcome === "always_domain") {
+        const url = typeof call.arguments.url === "string" ? call.arguments.url : undefined;
+        if (url) this.permissions.allowDomainForSession(url);
+      } else if (outcome === "readonly_session") {
+        this.permissions.allowReadonlyForSession();
       }
       cleared.push(call);
       if (this.cancelled) return;

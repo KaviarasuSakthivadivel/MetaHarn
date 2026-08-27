@@ -188,11 +188,17 @@ const VISION_PREFIXES = ["gpt-4o", "gpt-4-turbo", "gpt-4.1", "gpt-5", "o3", "o4"
 // Reasoning-family models: no parallel tool calls, per OpenAI's own documented behavior.
 const NO_PARALLEL_TOOLS_PREFIXES = ["o1", "o3", "o4", "gpt-5"];
 
+export interface OpenAIProviderOptions {
+  /** Override the API base URL — the same Chat Completions wire shape this provider already
+   * speaks is also what Ollama, and most other "OpenAI-compatible" servers, expose. */
+  baseURL?: string;
+}
+
 export class OpenAIProvider implements ProviderClient {
   private readonly client: OpenAI;
 
-  constructor(apiKey: string) {
-    this.client = new OpenAI({ apiKey });
+  constructor(apiKey: string, opts: OpenAIProviderOptions = {}) {
+    this.client = new OpenAI({ apiKey, ...(opts.baseURL ? { baseURL: opts.baseURL } : {}) });
   }
 
   async complete(req: CompletionRequest): Promise<AssistantTurn> {

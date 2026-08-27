@@ -171,6 +171,17 @@ export interface PermissionEvaluator {
     args: Record<string, unknown>,
     metadata: ToolMetadata,
   ): PermissionDecision;
+  /** Session-scoped grants an approval outcome of "always_*"/"readonly_session" applies —
+   * PermissionEngine already implements and consults all four (`sessionAllowTools` etc. in its
+   * own `evaluate()`), but nothing called the setters until Engine's handleToolCalls did. Part
+   * of the interface (not left as PermissionEngine-only methods) so Engine can call them
+   * without depending on the concrete class — see subagent.ts's ALWAYS_ALLOW for the other
+   * implementer, where these are no-ops (its evaluate() always returns `allowed: true`, so the
+   * approval flow that would call these never runs). */
+  allowToolForSession(toolName: string): void;
+  allowCommandForSession(command: string): void;
+  allowDomainForSession(urlOrDomain: string): void;
+  allowReadonlyForSession(): void;
 }
 
 export type ApprovalOutcome =
@@ -226,7 +237,17 @@ export type EngineEvent =
   | { type: "turn_start"; input: string }
   | { type: "text_delta"; text: string }
   | { type: "thinking_delta"; text: string }
-  | { type: "assistant_message"; text: string; reasoning?: string }
+  /** Fired the moment a user message is actually pushed onto `messages` — both the initial
+   * prompt (run()) and a mid-turn steer land here, at the exact array index it was pushed to.
+   * A consumer wanting "branch from this exact message" needs this: the index a message
+   * lands at isn't otherwise observable from the event stream (text_delta/tool_* carry no
+   * index at all), and a client-side message count can drift from the true array index (the
+   * seeded system message and empty tool-call-only assistant messages aren't always rendered
+   * 1:1). */
+  | { type: "user_message"; index: number; text: string }
+  /** `index` is this message's position in `messages` at the moment it was pushed — same
+   * rationale as `user_message` above. */
+  | { type: "assistant_message"; text: string; reasoning?: string; index: number }
   | { type: "tool_start"; toolCallId: string; name: string; arguments: Record<string, unknown> }
   | {
       type: "permission_required";
@@ -237,7 +258,11 @@ export type EngineEvent =
     }
   | { type: "tool_end"; toolCallId: string; name: string; result: unknown; error?: string }
   | { type: "turn_end"; status: TurnEndStatus; iterations: number }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  /** Fired once per completed model round-trip that reported usage. `usage` is that one
+   * round-trip's cost; `total` is the running sum for the whole session (`Engine.usage`) —
+   * consumers that only want a live "tokens used" readout can ignore `usage` entirely. */
+  | { type: "usage"; usage: TokenUsage; total: TokenUsage };
 
 // ---------------------------------------------------------------------------------------
 // Optional cross-cutting hooks — every one is an injected seam a later workstream fills in.

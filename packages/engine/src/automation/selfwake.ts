@@ -229,10 +229,19 @@ const WAKE_ON_EVENT_SCHEMA: ToolSchema = {
 /** Tools a session calls to schedule its own resumption. Not gated — a session suspending
  * itself has no external side effect at call time, same as OpenWorker's ungated originals. */
 export function createSelfWakeTools(store: WakeStore, sessionId: string): ToolDefinition[] {
+  // risk: "read" (not "write_local") is load-bearing, not a default — these tools only ever
+  // touch the local WakeStore's own bookkeeping, never the workspace, network, or a shell, so
+  // there is no path to scope against. A tool's own declared `risk` outranks
+  // `requiresApproval` in permissions/risk.ts's classify() precedence, so a "write_local"
+  // declaration here would silently override `requiresApproval: false` below and route every
+  // call through write-path scoping — which then fails closed ("cannot determine the write
+  // path to scope", since none of these tools take a path argument), asking a human for
+  // something this module's own docstring says should never need to ask at all. Reproduced
+  // live before this fix: a real `sleep_until` call hung on exactly that permission prompt.
   const metadata = {
     category: "automation",
     riskLevel: "low" as const,
-    risk: "write_local" as const,
+    risk: "read" as const,
     requiresApproval: false,
     capabilities: ["selfwake"],
   };

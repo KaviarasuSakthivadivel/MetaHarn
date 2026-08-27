@@ -36,6 +36,12 @@ const ALWAYS_ALLOW: PermissionEvaluator = {
   evaluate(): PermissionDecision {
     return { allowed: true, reason: "read-only child", needsUser: false, humanOnly: false };
   },
+  // Never actually called: evaluate() always returns `allowed: true`, so Engine's
+  // handleToolCalls never reaches the approval branch that would invoke these.
+  allowToolForSession() {},
+  allowCommandForSession() {},
+  allowDomainForSession() {},
+  allowReadonlyForSession() {},
 };
 
 export interface CreateExploreToolOptions {

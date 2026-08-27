@@ -311,9 +311,23 @@ export class PermissionEngine implements PermissionEvaluator {
       }
     }
     if (isEgress) {
-      const url = String(arguments_.url ?? "");
-      if (this.domainAllowed(url, honorSessionGrants)) {
-        return allow("domain on allowlist");
+      const hasUrl = typeof arguments_.url === "string" && arguments_.url.length > 0;
+      if (hasUrl) {
+        if (this.domainAllowed(String(arguments_.url), honorSessionGrants)) {
+          return allow("domain on allowlist");
+        }
+        // Falls through to `ask` below when the url isn't on the allowlist — a model-chosen
+        // destination (web_fetch, browser_open_url) is exactly the SSRF-shaped case domain
+        // scoping exists for.
+      } else if (metadata?.requiresApproval === false) {
+        // No model-chosen destination to scope in the first place (e.g. web_search's `query`
+        // isn't a url) — the domain-allowlist check above doesn't apply to it at all, so
+        // honor the tool's own declaration instead of silently falling through to `ask`
+        // regardless of what it says. Found live: web_search (risk floored to "egress" by
+        // name, requiresApproval: false in its own metadata) sat in the Inbox forever on
+        // every call — its own author's "no SSRF surface here" reasoning (see
+        // tools/websearch.ts's doc comment) was correct, evaluate() just never consulted it.
+        return allow("no destination to scope; tool declares no approval needed");
       }
     }
     if (honorSessionGrants && this.sessionAllowTools.has(toolName) && !isConnector) {
