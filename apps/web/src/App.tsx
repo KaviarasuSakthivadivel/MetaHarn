@@ -9,6 +9,7 @@ import Connectors from "./Connectors.js";
 import InboxPage from "./InboxPage.js";
 import SessionTree from "./SessionTree.js";
 import SessionPanel from "./SessionPanel.js";
+import { humanizeTool } from "./humanize.js";
 
 interface ChatMessage {
   role: "user" | "assistant" | "tool" | "system";
@@ -444,6 +445,7 @@ export default function App() {
     if (m.role === "tool") {
       const key = m.toolCallId ?? String(i);
       const expanded = expandedTools.has(key);
+      const line = humanizeTool(m.text, m.args);
       return (
         <div key={i} className="tool-row">
           <button
@@ -457,7 +459,12 @@ export default function App() {
               })
             }
           >
-            <span className={`dot ${m.status}`} /> {m.text}
+            <span className={`dot ${m.status}`} />
+            <span className="tool-chip-line">
+              <span className="tool-chip-pre">{line.pre}</span>
+              {line.obj && <span className="tool-chip-obj">{line.obj}</span>}
+              {line.post && <span className="tool-chip-post">{line.post}</span>}
+            </span>
             <span className="tool-chip-caret">{expanded ? "▾" : "▸"}</span>
           </button>
           {expanded && (

@@ -830,8 +830,11 @@
 
 .tool-chip-caret {
   font-size: 9px;
-  opacity: 0.6;
-  margin-left: 2px;
+  opacity: 0.5;
+  flex: none;
+  margin-left: auto;
+  margin-top: 6px;
+  color: var(--text-muted);
 }
 
 .tool-detail {
@@ -964,23 +967,23 @@
 }
 
 .tool-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12.5px;
-  font-weight: 600;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: var(--paper-dim);
-  border: 1px solid var(--line);
-  color: var(--text-muted);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text);
   cursor: pointer;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
 }
 
 .tool-chip:hover {
-  border-color: var(--line-strong);
-  color: var(--text);
+  background: var(--paper-dim);
 }
 
 .tool-chip .dot {
@@ -988,6 +991,26 @@
   height: 7px;
   border-radius: 999px;
   flex: none;
+  margin-top: 6px;
+}
+
+.tool-chip-line {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.tool-chip-pre {
+  color: var(--text-muted);
+}
+
+.tool-chip-obj {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tool-chip-post {
+  color: var(--text-muted);
 }
 
 .tool-chip .dot.pending {
@@ -1517,6 +1540,26 @@
 
 .btn-sm:hover {
   background: var(--ink-soft);
+}
+
+.btn-sm.outline {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+}
+
+.btn-sm.outline:hover {
+  border-color: var(--ink);
+  background: var(--paper-dim);
+}
+
+.btn-sm.accent {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn-sm.accent:hover {
+  background: #ff6b36;
 }
 
 .btn-sm.danger {
@@ -2077,4 +2120,144 @@
 
 .access-grant-checkbox input {
   cursor: pointer;
+}
+
+/* ---------- Inbox ---------- */
+
+.inbox-header-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.inbox-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  padding: 2px 9px;
+  border-radius: 999px;
+}
+
+.inbox-empty {
+  text-align: center;
+  padding: 72px 20px;
+  color: var(--text-muted);
+}
+
+.inbox-empty svg {
+  color: var(--line-strong);
+  margin-bottom: 10px;
+}
+
+.inbox-empty h3 {
+  font-size: 17px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.inbox-list {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.inbox-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--paper);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.inbox-card-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--warn);
+  margin-bottom: 10px;
+}
+
+.inbox-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--warn);
+  flex: none;
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.inbox-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.inbox-card-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.inbox-card-title .inline-code {
+  font-size: 0.82em;
+  font-weight: 600;
+}
+
+.inbox-card-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.inbox-card-reason {
+  color: var(--text-muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+  margin: 8px 0 0;
+  max-width: 620px;
+}
+
+.inbox-card-args {
+  margin-top: 14px;
+}
+
+.inbox-card-args .code-block {
+  margin: 0;
+}
+
+.inbox-card-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 14px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.inbox-card-meta[data-clickable="true"] {
+  cursor: pointer;
+}
+
+.inbox-card-meta[data-clickable="true"]:hover {
+  color: var(--text);
+}
+
+.inbox-card-meta svg {
+  flex: none;
+  opacity: 0.7;
 }

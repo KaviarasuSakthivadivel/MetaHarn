@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import * as client from "./client.js";
 import type { InboxItem, SessionListItem } from "./client.js";
+import Markdown from "./Markdown.js";
 
 interface InboxPageProps {
   sessions: SessionListItem[];
@@ -16,6 +17,37 @@ function timeAgo(ms: number): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function argsFence(args: Record<string, unknown> | undefined): string {
+  if (!args || Object.keys(args).length === 0) return "";
+  return "```json\n" + JSON.stringify(args, null, 2) + "\n```";
+}
+
+function IconClock() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3.5 2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconArrowRight() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <path d="M5 12h14M13 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconInboxEmpty() {
+  return (
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M4 12h4l2 3h4l2-3h4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 12l1.6-6.4A2 2 0 0 1 7.5 4h9a2 2 0 0 1 1.9 1.6L20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6Z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 /**
@@ -49,66 +81,68 @@ export default function InboxPage({ sessions, onOpenSession, onCountChange }: In
 
   return (
     <div className="settings-body" style={{ maxWidth: 760, margin: "0 auto", width: "100%" }}>
-      <h2 style={{ marginBottom: 4 }}>Inbox</h2>
+      <div className="inbox-header-row">
+        <h2 style={{ marginBottom: 4 }}>Inbox</h2>
+        {items && items.length > 0 && <span className="inbox-count">{items.length} pending</span>}
+      </div>
       <p className="desc" style={{ margin: 0 }}>
         Approvals waiting on you, from any session — even one that isn't open right now.
       </p>
 
       {items !== null && items.length === 0 && (
-        <div className="empty-state" style={{ marginTop: 20 }}>
+        <div className="inbox-empty">
+          <IconInboxEmpty />
           <h3>All clear</h3>
           <p>Nothing is waiting on you right now.</p>
         </div>
       )}
 
-      <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="inbox-list">
         {items?.map((item) => {
           const session = sessionFor(item.sessionId);
           const busy = resolvingId === item.id;
+          const fence = argsFence(item.arguments);
           return (
-            <div className="list-card" key={item.id} style={{ alignItems: "flex-start", flexDirection: "column", gap: 10 }}>
-              <div style={{ width: "100%", display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <div className="list-card-main">
-                  <div className="list-card-title">{item.title ?? `Run \`${item.toolName ?? "tool"}\`?`}</div>
-                  {item.body && <div className="list-card-sub">{item.body}</div>}
-                  <button
-                    className="list-card-sub"
-                    style={{ border: "none", background: "transparent", padding: 0, cursor: session ? "pointer" : "default", color: session ? "var(--accent)" : undefined }}
-                    disabled={!session}
-                    onClick={() => session && onOpenSession(session)}
-                  >
-                    {session ? `${session.name} · ${timeAgo(item.createdAt)}` : `unknown session · ${timeAgo(item.createdAt)}`}
-                  </button>
+            <div className="inbox-card" key={item.id}>
+              <div className="inbox-card-status">
+                <span className="inbox-status-dot" />
+                Waiting on you
+              </div>
+              <div className="inbox-card-top">
+                <div className="inbox-card-title">
+                  {item.toolName ? (
+                    <>
+                      Run <code className="inline-code">{item.toolName}</code>?
+                    </>
+                  ) : (
+                    item.title ?? "Approval needed"
+                  )}
                 </div>
-                <div className="list-card-actions">
-                  <button className="btn-sm" style={{ background: "transparent", color: "var(--text-muted)", border: "1px solid var(--line)" }} disabled={busy} onClick={() => resolve(item, "deny")}>
+                <div className="inbox-card-actions">
+                  <button className="btn-sm outline" disabled={busy} onClick={() => resolve(item, "deny")}>
                     Deny
                   </button>
-                  <button className="btn-sm" style={{ background: "var(--ink)", color: "#fff" }} disabled={busy} onClick={() => resolve(item, "once")}>
+                  <button className="btn-sm accent" disabled={busy} onClick={() => resolve(item, "once")}>
                     Allow
                   </button>
                 </div>
               </div>
-              {item.arguments && (
-                <pre
-                  style={{
-                    width: "100%",
-                    boxSizing: "border-box",
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 11.5,
-                    color: "var(--text-muted)",
-                    background: "var(--paper-dim)",
-                    border: "1px solid var(--line)",
-                    borderRadius: 8,
-                    padding: 10,
-                    margin: 0,
-                    overflowX: "auto",
-                    maxHeight: 140,
-                  }}
-                >
-                  {JSON.stringify(item.arguments, null, 1)}
-                </pre>
+              {item.body && <p className="inbox-card-reason">{item.body}</p>}
+              {fence && (
+                <div className="inbox-card-args">
+                  <Markdown>{fence}</Markdown>
+                </div>
               )}
+              <button
+                className="inbox-card-meta"
+                data-clickable={session ? "true" : "false"}
+                disabled={!session}
+                onClick={() => session && onOpenSession(session)}
+              >
+                <IconClock />
+                {session ? session.name : "Unknown session"} · {timeAgo(item.createdAt)}
+                {session && <IconArrowRight />}
+              </button>
             </div>
           );
         })}

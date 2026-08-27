@@ -174,6 +174,22 @@ still renders every tool call as its own top-level row). A real port needs its o
 Electron has no existing right-hand-sidebar pattern to slot this into, unlike the provider-pages
 work which reused an existing settings-page shape.
 
+The two follow-on polish passes on this (the redesigned Inbox approval card, and
+`apps/web/src/humanize.ts`'s human-readable per-tool-call step summaries) are also web-only, same
+reason — Electron's `InboxPage.tsx` and transcript tool-row rendering are untouched by either.
+
+### No in-UI viewer for files the agent writes to workspace/scratch roots
+
+Surfaced by a real user question ("where is the full document in your Artifacts panel?") after an
+owned-engine session wrote a file to its scratch directory (see `ServerSession`'s per-session
+scratch root in [`09-owned-engine.md`](09-owned-engine.md)) — the model's own answer referenced a
+nonexistent "Artifacts"/"Scratch panel," which doesn't exist on either surface. The file is real
+and sits on disk under the granted root shown in the Access panel, but there is no in-app way to
+browse a root's contents or preview a file the agent wrote — the only ways to see it today are
+opening it outside MetaHarn (Finder, an editor) or asking the agent to paste its contents back
+into chat, where Markdown rendering picks it up correctly. Not started; flagged here rather than
+attempted speculatively since it wasn't part of the request that surfaced it.
+
 ## Install/build environment quirks (already worked around, documented for context)
 
 This environment blocks native-module `postinstall` scripts by default (an `npm install-scripts` allowlist). One package is affected and already handled:

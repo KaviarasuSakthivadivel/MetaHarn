@@ -779,6 +779,51 @@ row disappeared and the folder count updated); the step trace's "Ran 1 step" col
 around a real `web_search` call with the true final answer rendered outside it, then expanding on
 click to reveal the tool call still inside.
 
+### Inbox card redesign, and human-readable step summaries
+
+Two follow-on polish passes on top of the Session panel work above, both prompted by a live
+screenshot of the previous design looking rough in practice rather than a fresh feature ask.
+
+**Inbox card**: the original `InboxPage.tsx` reused `.list-card`/`.list-card-sub` — a class built
+for short single-line metadata rows elsewhere in Settings — for a multi-paragraph approval card,
+which produced two real problems, not just a dated look: the item's `body` (the permission
+engine's actual reason string, e.g. `"this outlives the session — approval required"`) rendered
+in `.list-card-sub`'s accent-styled sibling button color by visual coincidence, reading as an
+urgent warning when it's just explanatory text; and the raw args rendered in a plain `<pre>`
+instead of the same `.code-block` component (dark, syntax-highlighted, with Copy) already used
+for tool-call detail elsewhere in the transcript. Rebuilt as a dedicated `.inbox-card` — a pulsing
+"waiting on you" status line, the tool name as a real `<code>` chip instead of literal backticks
+in plain text, the reason as properly muted prose, args through the same `<Markdown>`-rendered
+`.code-block` as the chat transcript, and the session/time metadata demoted to a small neutral
+footer link instead of looking like the loudest thing on the card. `apps/web/src/InboxPage.tsx`,
+new CSS in `shell.css` (`.inbox-*`, plus `.btn-sm.outline`/`.btn-sm.accent` button variants reused
+for Deny/Allow).
+
+**Human-readable step summaries**: the transcript's per-tool-call chip previously showed just the
+bare tool name (`web_search`), which reads fine for one call but not as a scanning aid across a
+"Ran N steps" trace. OpenWorker's own reference UI (`surfaces/gui/src/humanize.ts`) solves this
+with a per-tool-name template that synthesizes an English one-liner from the call's actual
+arguments — `apps/web/src/humanize.ts` is a direct port, scoped to `@metaharn/engine`'s actual
+tool set (confirmed name-for-name against `packages/engine/src/tools/*.ts`,
+`memory/tools.ts`, `automation/tools.ts`, `web/fetch.ts` — most tool names are identical between
+the two engines since MetaHarn's tool surface was built to overlap OpenWorker's; a handful
+OpenWorker has that MetaHarn doesn't, like `send_message`/`apply_patch`, were left out rather than
+speculatively templated). Falls back to `Used <tool> — <key=value ...>` for anything untemplated,
+with a special case unpacking `mcp__<server>__<tool>` into `<tool> (via <server>)` since that's a
+MetaHarn-specific naming convention OpenWorker's own version doesn't need to handle. `.tool-chip`
+changed from an inline pill sized for a bare tool name to a full-width row (`.tool-chip-line`,
+`.tool-chip-pre`/`-obj`/`-post` matching `humanizeTool`'s three-segment `HumanLine` shape) — the
+pill shape is what turned into an oval blob under a long synthesized sentence during testing, the
+same failure mode a raw JSON dump made even worse before this pass. Click-to-expand behavior
+(args/result in `.code-block`) is unchanged, just relabeled.
+
+Both verified live via CDP: a real pending `run_shell` approval rendered through the new Inbox
+card end to end (status line, code chip, reason, syntax-highlighted args, session link, Deny
+resolving it); a real three-tool turn (`todo_write` → `web_search` → `list_files`) rendered as
+"Updated the plan — 2 items" / "Searched the web — "current UTC time"" / "Used list_files —
+path=." with correct status-colored dots, then expanded on click to confirm the underlying
+args/result code blocks still render correctly under the new row layout.
+
 ## Known gaps specific to this workstream
 
 See [`08-known-limitations.md`](08-known-limitations.md) for the full, itemized list (provider
