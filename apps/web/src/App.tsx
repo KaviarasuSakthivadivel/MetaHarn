@@ -126,6 +126,46 @@ function IconSend() {
   );
 }
 
+function IconFork() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="18" cy="6" r="2.5" />
+      <circle cx="12" cy="18" r="2.5" />
+      <path d="M6 8.5v2A2.5 2.5 0 0 0 8.5 13H12M18 8.5v2A2.5 2.5 0 0 1 15.5 13H12M12 13v2.5" />
+    </svg>
+  );
+}
+
+function IconBranch() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="6" y1="3" x2="6" y2="15" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M18 9a9 9 0 0 1-9 9" />
+    </svg>
+  );
+}
+
+function IconPanelRight() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <line x1="15" y1="4" x2="15" y2="20" />
+    </svg>
+  );
+}
+
+function IconPlus() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
 export default function App() {
   const [connectError, setConnectError] = useState<string | undefined>();
   const [repoPath, setRepoPath] = useState("");
@@ -651,19 +691,16 @@ export default function App() {
                   </span>
                 )}
                 <button className="btn-ghost" onClick={forkCurrentSession} disabled={messages.length === 0} title="Duplicate this conversation into a new session">
-                  Fork
+                  <IconFork /> Fork
                 </button>
                 <button className="btn-ghost" onClick={toggleTree} disabled={messages.length === 0} title="Rewind to an earlier point and branch from it">
-                  Tree
+                  <IconBranch /> Tree
                 </button>
                 <button className={`btn-ghost${showSessionPanel ? " active" : ""}`} onClick={() => setShowSessionPanel((v) => !v)} title="Progress, folders, and sources for this session">
-                  Session
-                </button>
-                <button className="btn-ghost" onClick={() => setView("settings")}>
-                  Settings
+                  <IconPanelRight /> Session
                 </button>
                 <button className="btn-ghost" onClick={startNewSession}>
-                  New session
+                  <IconPlus /> New session
                 </button>
               </div>
             </div>

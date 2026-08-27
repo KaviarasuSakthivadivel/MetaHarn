@@ -504,6 +504,9 @@
 }
 
 .btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: none;
   background: transparent;
   color: var(--text-muted);
@@ -512,6 +515,11 @@
   cursor: pointer;
   padding: 6px 10px;
   border-radius: var(--radius-sm);
+}
+
+.btn-ghost svg {
+  flex: none;
+  opacity: 0.75;
 }
 
 .btn-ghost:hover {
@@ -528,6 +536,10 @@
 .btn-ghost.active {
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+.btn-ghost.active svg {
+  opacity: 1;
 }
 
 .messages {
