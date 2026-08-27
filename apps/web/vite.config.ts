@@ -6,7 +6,9 @@ import react from "@vitejs/plugin-react";
 
 // @metaharn/server writes a fresh random token to this file on every launch (and, under
 // `tsx watch`, on every restart) — see apps/server/src/index.ts.
-const PORT = Number(process.env.METAHARN_SERVER_PORT ?? 8765);
+// Must match apps/server/src/index.ts's default exactly — see that file's comment on why it's
+// deliberately not 8765 (OpenWorker's own default, which collides when both run at once).
+const PORT = Number(process.env.METAHARN_SERVER_PORT ?? 8791);
 const stateDir =
   process.env.METAHARN_STATE_DIR ??
   (process.platform === "win32" ? join(process.env.APPDATA ?? "", "MetaHarn") : join(homedir(), ".metaharn"));
