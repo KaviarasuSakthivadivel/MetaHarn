@@ -102,6 +102,7 @@ export function copyExternalDeps(buildPath, platform, arch) {
     "node-pty",
     "@earendil-works/pi-coding-agent",
     "better-sqlite3",
+    "@modelcontextprotocol/sdk",
   ];
   const { resolvedDirs, missing } = collectClosure(EXTERNAL_ROOTS, REPO_ROOT);
 

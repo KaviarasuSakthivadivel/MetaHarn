@@ -1,9 +1,19 @@
 import { existsSync, statSync } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
-import type { ApprovalOutcome } from "@metaharn/engine";
+// Type-only — erased at compile time, so this doesn't pull the package's runtime code in (see
+// ownedEngine.ts's import comment for why that matters: the full barrel drags in
+// @modelcontextprotocol/sdk's require("child_process") call, which crashes this forced-ESM
+// bundle). Imported from the specific submodule anyway, for consistency with ownedEngine.ts.
+import type { ApprovalOutcome } from "@metaharn/engine/src/types.js";
 import { createMetaHarnSession, getModelConfig, type MetaHarnSession } from "./agent.js";
-import { createOwnedEngineSession, ownedEngineEnabled, type OwnedEngineSession } from "./ownedEngine.js";
+import {
+  createOwnedEngineSession,
+  isOwnedSessionPath,
+  ownedEngineEnabled,
+  ownedMessagesToHistory,
+  type OwnedEngineSession,
+} from "./ownedEngine.js";
 import { closePty, setPendingSeedPrompt } from "./pty-ipc.js";
 import { generateHandoffSummary } from "./agents/handoff.js";
 import { getTerminalSessionStats } from "./terminal-stats.js";
@@ -128,11 +138,14 @@ export function registerIpcHandlers() {
 
         disposeSessionFor(sender.id);
 
-        if (ownedEngineEnabled()) {
-          // No durable transcript yet for this backend (see ownedEngine.ts's module doc) —
-          // resumeSessionPath is accepted but ignored; every owned-engine session starts
-          // fresh. A real resume story is deliberate later work, not an oversight.
-          const session = createOwnedEngineSession(repoPath);
+        // Resuming an existing owned-engine transcript always resumes as owned, regardless
+        // of the CURRENT METAHARN_CHAT_ENGINE value — the toggle only decides the backend for
+        // a brand-new session. Without this, flipping the env var after the fact would make
+        // an old owned-engine session silently open as a blank Pi session (or vice versa).
+        const useOwnedEngine = resumeSessionPath ? isOwnedSessionPath(resumeSessionPath) : ownedEngineEnabled();
+
+        if (useOwnedEngine) {
+          const session = createOwnedEngineSession(repoPath, { resumeSessionPath });
           const unsubscribe = session.subscribe((e) => pushEvent(sender, e));
           sessionsByWindow.set(sender.id, { kind: "owned", session, unsubscribe });
 
@@ -141,7 +154,11 @@ export function registerIpcHandlers() {
             console.warn("[metaharn] catalog write failed:", (err as Error).message),
           );
 
-          pushEvent(sender, { type: "ready", sessionId: session.sessionId, history: [] });
+          pushEvent(sender, {
+            type: "ready",
+            sessionId: session.sessionId,
+            history: resumeSessionPath ? ownedMessagesToHistory(session.messages) : [],
+          });
           return;
         }
 

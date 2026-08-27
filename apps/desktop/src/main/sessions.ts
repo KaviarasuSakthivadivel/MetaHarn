@@ -6,6 +6,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { db, repos, sessions as sessionsTable } from "@metaharn/db";
 import type { AgentKind } from "./agents/types.js";
 import { listArchivedSessionTimestamps, listArchivedTerminalSessions } from "./catalog.js";
+import { listOwnedSessions } from "./ownedEngine.js";
 
 export interface SessionListItem {
   type: "chat" | "terminal";
@@ -43,6 +44,15 @@ export async function listAllSessions(): Promise<SessionListItem[]> {
       type: "chat" as const,
     }));
 
+  // Owned-engine sessions (METAHARN_CHAT_ENGINE=owned) — a disk scan mirroring
+  // SessionManager.listAll()'s job, for this backend's own transcript files
+  // (ownedEngine.ts). Both are type "chat"; only the storage format differs, which the
+  // renderer never needs to know about — see ownedEngine.ts's isOwnedSessionPath for how a
+  // resume routes to the right backend regardless of which one is currently selected.
+  const ownedSessions: SessionListItem[] = listOwnedSessions()
+    .filter((s) => !archivedAtById.has(s.id))
+    .map((s) => ({ ...s, type: "chat" as const }));
+
   const terminalRows = await db
     .select({
       id: sessionsTable.id,
@@ -71,7 +81,7 @@ export async function listAllSessions(): Promise<SessionListItem[]> {
       agentKind: row.agentKind as AgentKind,
     }));
 
-  return [...chatSessions, ...terminalSessions];
+  return [...chatSessions, ...ownedSessions, ...terminalSessions];
 }
 
 export interface ArchivedSessionItem extends SessionListItem {
@@ -99,6 +109,10 @@ export async function listArchivedSessions(cwd?: string): Promise<ArchivedSessio
       archivedAt: archivedAtById.get(s.id) ?? new Date(0),
     }));
 
+  const ownedSessions: ArchivedSessionItem[] = listOwnedSessions()
+    .filter((s) => archivedAtById.has(s.id) && (!cwd || s.cwd === cwd))
+    .map((s) => ({ ...s, type: "chat" as const, archivedAt: archivedAtById.get(s.id) ?? new Date(0) }));
+
   const terminalRows = await listArchivedTerminalSessions(cwd);
   const terminalSessions: ArchivedSessionItem[] = terminalRows.map((row) => ({
     type: "terminal",
@@ -114,7 +128,7 @@ export async function listArchivedSessions(cwd?: string): Promise<ArchivedSessio
     archivedAt: row.archivedAt!,
   }));
 
-  return [...chatSessions, ...terminalSessions];
+  return [...chatSessions, ...ownedSessions, ...terminalSessions];
 }
 
 /**
