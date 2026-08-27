@@ -88,6 +88,20 @@ export default function PermissionPrompt({ request, onResolve }: PermissionPromp
             Deny
           </button>
           <button
+            onClick={() => onResolve("always_tool")}
+            title={`Skip this prompt for every future "${request.toolName}" call in this session`}
+            style={{
+              border: "1px solid var(--color-border)",
+              borderRadius: 6,
+              background: "transparent",
+              color: "var(--color-text)",
+              cursor: "pointer",
+              padding: "6px 14px",
+            }}
+          >
+            Always Allow
+          </button>
+          <button
             onClick={() => onResolve("once")}
             style={{
               border: "none",

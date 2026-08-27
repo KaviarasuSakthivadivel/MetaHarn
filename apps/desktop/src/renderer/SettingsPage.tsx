@@ -3,6 +3,7 @@ import type { AgentStatus, AppInfo } from "../preload/preload.js";
 import { useSettings, type ThemeMode } from "./SettingsContext.js";
 import { THEMES, type ThemeDef } from "./themes.js";
 import ConfirmDialog from "./ConfirmDialog.js";
+import OwnedEngineSettings from "./OwnedEngineSettings.js";
 import { Eyebrow, Row, Section, SegmentedControl, SPACE, TEXT } from "./ui.js";
 
 const MODES: { mode: ThemeMode; label: string; icon: string }[] = [
@@ -194,6 +195,8 @@ export default function SettingsPage() {
           control={<span style={{ fontSize: 13, fontFamily: '"IBM Plex Mono", Menlo, Monaco, monospace' }}>{appInfo?.modelId ?? "…"}</span>}
         />
       </Section>
+
+      <OwnedEngineSettings />
 
       <Section title="Agent CLIs">
         <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--color-text-secondary)" }}>

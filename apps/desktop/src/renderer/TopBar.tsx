@@ -10,9 +10,20 @@ interface TopBarProps {
   onNewProject: () => void;
   onOpenSettings: () => void;
   settingsActive?: boolean;
+  onOpenInbox: () => void;
+  inboxActive?: boolean;
+  pendingInboxCount: number;
 }
 
-export default function TopBar({ onBrandClick, onNewProject, onOpenSettings, settingsActive }: TopBarProps) {
+export default function TopBar({
+  onBrandClick,
+  onNewProject,
+  onOpenSettings,
+  settingsActive,
+  onOpenInbox,
+  inboxActive,
+  pendingInboxCount,
+}: TopBarProps) {
   return (
     <header
       style={{
@@ -77,6 +88,45 @@ export default function TopBar({ onBrandClick, onNewProject, onOpenSettings, set
           }}
         >
           +
+        </button>
+        <button
+          onClick={onOpenInbox}
+          aria-label="Inbox"
+          className="metaharn-tooltip"
+          style={{
+            position: "relative",
+            border: "1px solid var(--color-border)",
+            borderRadius: 6,
+            background: inboxActive ? "var(--color-bg-hover)" : "transparent",
+            color: "var(--color-text)",
+            cursor: "pointer",
+            width: 28,
+            height: 28,
+            lineHeight: 1,
+          }}
+        >
+          🔔
+          {pendingInboxCount > 0 && (
+            <span
+              style={{
+                position: "absolute",
+                top: -4,
+                right: -4,
+                minWidth: 15,
+                height: 15,
+                padding: "0 3px",
+                borderRadius: 999,
+                background: "var(--color-accent)",
+                color: "#fff",
+                fontSize: 10,
+                fontWeight: 700,
+                lineHeight: "15px",
+                textAlign: "center",
+              }}
+            >
+              {pendingInboxCount > 9 ? "9+" : pendingInboxCount}
+            </span>
+          )}
         </button>
         <button
           onClick={onOpenSettings}

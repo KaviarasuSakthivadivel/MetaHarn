@@ -258,6 +258,40 @@ button.metaharn-btn-primary:disabled {
   transition-delay: 0.25s;
 }
 
+/* Icon-only row action (OwnedEngineSettings.tsx's IconButton), revealed on row hover — same
+   pattern as apps/web/src/shell.css's .list-card-icon-btn, so a settings row with several
+   actions (Connectors, Automations) doesn't repeat the same text button down the whole list. */
+.metaharn-list-row-icon-btn {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 100ms ease, background 100ms ease, color 100ms ease;
+}
+
+.metaharn-list-row:hover .metaharn-list-row-icon-btn,
+.metaharn-list-row-icon-btn:focus-visible {
+  opacity: 0.7;
+}
+
+.metaharn-list-row-icon-btn:hover {
+  opacity: 1 !important;
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.metaharn-list-row-icon-btn.danger:hover {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+
 /* Session status dot (Sidebar.tsx) — a slow breathing pulse for genuinely
    live states (Working / Active) only; Waiting/Idle/Exited stay static, so
    motion itself carries meaning instead of being decorative. */

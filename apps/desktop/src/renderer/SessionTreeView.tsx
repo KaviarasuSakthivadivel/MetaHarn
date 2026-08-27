@@ -10,6 +10,12 @@ const TYPE_ICON: Record<string, string> = {
   label: "🏷",
   custom: "•",
   custom_message: "•",
+  // Owned-engine node types — getOwnedSessionTree()'s nodes are one per ChatMessage, typed by
+  // role rather than Pi's SDK entry types above.
+  user: "🧑",
+  assistant: "🤖",
+  tool: "🔧",
+  system: "⚙",
 };
 
 interface TreeNodeProps {

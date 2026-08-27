@@ -18,6 +18,7 @@ import ProjectsListPage from "./ProjectsListPage.js";
 import FilesPane from "./FilesPane.js";
 import TerminalPane from "./TerminalPane.js";
 import SettingsPage from "./SettingsPage.js";
+import InboxPage from "./InboxPage.js";
 import ConfirmDialog from "./ConfirmDialog.js";
 import PermissionPrompt, { type PendingPermission } from "./PermissionPrompt.js";
 import SessionTreeView from "./SessionTreeView.js";
@@ -38,6 +39,39 @@ interface ChatMessage {
   toolCallId?: string;
   status?: "pending" | "done" | "error";
   detail?: string;
+  // Owned-engine sessions only (see preload.ts's HistoryMessage/message_index event) — this
+  // message's position in the underlying ChatMessage[], letting the "branch from here" button
+  // construct the exact `${sessionId}:${index}` node id branchTo() expects. Named to match
+  // HistoryMessage's own `index` field so `setMessages(data.history)` (the "ready" case below)
+  // passes it through with no per-field mapping. Undefined for a Pi session (no inline branch
+  // action there — SessionTreeView.tsx covers it) and briefly undefined for a just-sent
+  // owned-engine message too, until its message_index event arrives.
+  index?: number;
+}
+
+/** Inline "branch from here" — only ever rendered when `index` is defined (owned-engine
+ * sessions only; see ChatMessage.index). A small, low-emphasis icon button rather than
+ * hover-gated, since this file's chat rows don't otherwise track per-row hover state. */
+function BranchButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Branch from here — rewind to this point and continue differently"
+      className="metaharn-tooltip"
+      style={{
+        border: "none",
+        background: "transparent",
+        color: "var(--color-text-muted)",
+        cursor: "pointer",
+        fontSize: 12,
+        padding: "2px 4px",
+        opacity: 0.6,
+        lineHeight: 1,
+      }}
+    >
+      ⎇
+    </button>
+  );
 }
 
 /** Arbitrary tool args/result (real objects from the Pi SDK, shape varies
@@ -69,7 +103,8 @@ type MainView =
   | { kind: "project"; cwd: string; tab: "overview" | "files" }
   | { kind: "session"; cwd: string; sessionPath?: string }
   | { kind: "terminal"; cwd: string; terminalSessionId: string; resume: boolean }
-  | { kind: "settings" };
+  | { kind: "settings" }
+  | { kind: "inbox" };
 
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_STORAGE_KEY = "metaharn:sidebarWidth";
@@ -85,6 +120,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
+  const [pendingInboxCount, setPendingInboxCount] = useState(0);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [pendingConfirm, setPendingConfirm] = useState<{
     message: string;
@@ -237,6 +273,17 @@ export default function App() {
     void window.metaharn.listAvailableAgents().then((agents) => {
       if (agents.length > 0) setInstalledAgents(agents);
     });
+  }, []);
+
+  // Badge-only poll — the Inbox page itself does its own on-demand fetch/refresh; this just
+  // keeps TopBar's count roughly current without requiring the page to be open. 20s is a
+  // deliberately loose cadence (this is discoverability, not a live queue) — a genuinely fresh
+  // count still shows the moment the Inbox page itself is opened.
+  useEffect(() => {
+    const poll = () => void window.metaharn.listOwnedPendingInbox().then((items) => setPendingInboxCount(items.length));
+    poll();
+    const id = setInterval(poll, 20_000);
+    return () => clearInterval(id);
   }, []);
 
   // Global (not per-TerminalPane) pty-output listener — every ptyData event
@@ -395,6 +442,17 @@ export default function App() {
           break;
         case "thinking_delta":
           appendToLastThinking(data.delta);
+          break;
+        case "message_index":
+          // Always targets the LAST message of that role — safe because a new bubble of a
+          // given role is always appended (optimistically, for "user"; via appendToLastAssistant
+          // creating one, for "assistant") strictly before the server round-trip that reports
+          // its index arrives, and turns/steers within one session are never concurrent.
+          setMessages((prev) => {
+            const idx = prev.map((m) => m.role).lastIndexOf(data.role);
+            if (idx === -1) return prev;
+            return [...prev.slice(0, idx), { ...prev[idx], index: data.index }, ...prev.slice(idx + 1)];
+          });
           break;
         case "tool_start":
           setMessages((prev) => [
@@ -886,13 +944,43 @@ export default function App() {
 
   const branchTo = (entryId: string) => {
     setShowTree(false);
-    // Same "clear then wait for the pushed ready event" shape as
-    // openSession/quickSession — branchSession's IPC handler re-sends a
-    // fresh `ready` event with the new leaf's history once navigateTree
-    // resolves.
-    setReady(false);
-    setMessages([]);
-    void window.metaharn.branchSession(entryId);
+    const cwd = view.kind === "session" ? view.cwd : undefined;
+    window.metaharn
+      .branchSession(entryId)
+      .then((result) => {
+        if (result && "path" in result && cwd) {
+          // Owned-engine branch: unlike Pi's in-place navigateTree, this created a whole NEW
+          // session file — switch to it exactly like forkChatSession does.
+          setReady(false);
+          setMessages([]);
+          setView({ kind: "session", cwd, sessionPath: result.path });
+          void window.metaharn.init(cwd, result.path);
+          return;
+        }
+        // Pi path: branches in place and pushes its own fresh "ready" event once
+        // navigateTree resolves — just clear the current view to wait for it.
+        setReady(false);
+        setMessages([]);
+      })
+      .catch((err: Error) => alert(`Couldn't branch session: ${err.message}`));
+  };
+
+  /** Inline "branch from here" on one chat message — the same practical outcome as picking a
+   * node in the Tree panel (branchTo above), but from the transcript itself, and always
+   * against the currently active session (branchCurrentSession needs no session id). */
+  const branchFromMessage = (messageIndex: number) => {
+    const cwd = view.kind === "session" ? view.cwd : undefined;
+    if (!cwd) return;
+    window.metaharn
+      .branchCurrentSession(messageIndex)
+      .then((result) => {
+        if (!result) return;
+        setReady(false);
+        setMessages([]);
+        setView({ kind: "session", cwd, sessionPath: result.path });
+        void window.metaharn.init(cwd, result.path);
+      })
+      .catch((err: Error) => alert(`Couldn't branch session: ${err.message}`));
   };
 
   const toggleContext = () => {
@@ -1088,6 +1176,9 @@ export default function App() {
         onNewProject={newProject}
         onOpenSettings={() => setView({ kind: "settings" })}
         settingsActive={view.kind === "settings"}
+        onOpenInbox={() => setView({ kind: "inbox" })}
+        inboxActive={view.kind === "inbox"}
+        pendingInboxCount={pendingInboxCount}
       />
 
       <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
@@ -1179,6 +1270,9 @@ export default function App() {
         )}
 
         {view.kind === "settings" && <SettingsPage />}
+        {view.kind === "inbox" && (
+          <InboxPage sessions={sessions} onOpenSession={openSession} onCountChange={setPendingInboxCount} />
+        )}
 
         {view.kind === "projectsList" && (
           <ProjectsListPage
@@ -1448,14 +1542,18 @@ export default function App() {
                         <div
                           key={i}
                           style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            justifyContent: "space-between",
+                            gap: 8,
                             borderLeft: "3px solid var(--color-accent)",
                             background: "var(--color-bg-secondary)",
                             borderRadius: "0 8px 8px 0",
                             padding: "8px 14px",
-                            whiteSpace: "pre-wrap",
                           }}
                         >
-                          {m.text}
+                          <span style={{ whiteSpace: "pre-wrap" }}>{m.text}</span>
+                          {m.index !== undefined && <BranchButton onClick={() => branchFromMessage(m.index!)} />}
                         </div>
                       );
                     }
@@ -1531,6 +1629,11 @@ export default function App() {
                     return (
                       <div key={i} style={{ padding: "0 4px", lineHeight: 1.5 }}>
                         {renderMarkdown(m.text, `msg-${i}`)}
+                        {m.index !== undefined && (
+                          <div style={{ marginTop: 2 }}>
+                            <BranchButton onClick={() => branchFromMessage(m.index!)} />
+                          </div>
+                        )}
                       </div>
                     );
                   })}
