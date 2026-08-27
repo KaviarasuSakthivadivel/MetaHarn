@@ -2,7 +2,32 @@
 
 export type ApprovalOutcome = "once" | "always_tool" | "always_command" | "always_domain" | "readonly_session" | "deny";
 
-export type HistoryMessage = { role: "user" | "assistant" | "tool"; text: string };
+/** `index` is this message's position in the underlying ChatMessage[] — what "branch from
+ * here" needs (getSessionTree()'s node ids are `${sessionId}:${index}` in that same array). Not
+ * the same as this item's position in the returned array: the server skips the seeded system
+ * message and any empty tool-call-only assistant message, so array position and true message
+ * index diverge after the first skip. */
+export type HistoryMessage = { role: "user" | "assistant" | "tool"; text: string; index: number };
+
+export type TodoStatus = "pending" | "in_progress" | "done";
+
+export interface TodoItem {
+  content: string;
+  status: TodoStatus;
+}
+
+export interface RootDir {
+  path: string;
+  writable: boolean;
+  label: string;
+}
+
+export interface TokenUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
 
 export type ServerEvent =
   | { type: "text_delta"; delta: string }
@@ -11,7 +36,12 @@ export type ServerEvent =
   | { type: "tool_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
   | { type: "permission_required"; toolCallId: string; toolName: string; args: unknown; reason: string }
   | { type: "agent_end" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "usage"; total: TokenUsage }
+  /** A user or assistant message just landed at `index` in the underlying ChatMessage[] — what
+   * the chat view needs to offer "branch from here" on a specific bubble live, without waiting
+   * for a page reload's history to supply it. */
+  | { type: "message_index"; role: "user" | "assistant"; index: number };
 
 export interface SessionListItem {
   id: string;
@@ -21,6 +51,69 @@ export interface SessionListItem {
   modified: string;
   messageCount: number;
   firstMessage: string;
+  parentId?: string;
+}
+
+export interface ProviderStatus {
+  name: string;
+  displayName: string;
+  noKeyNeeded: boolean;
+  configured: boolean;
+  baseUrl?: string;
+}
+
+export type MemoryScope = "global" | "workspace";
+
+export interface MemoryItem {
+  id: number;
+  scope: MemoryScope;
+  content: string;
+  summary?: string;
+  workspace?: string;
+  createdAt?: string;
+}
+
+export interface McpServer {
+  name: string;
+  transport: "stdio" | "http";
+  command?: string;
+  args: string[];
+  env: Record<string, string>;
+  url?: string;
+  headers: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface AutomationSchedule {
+  kind: "cron" | "once";
+  cron: string | null;
+  fireAt: string | null;
+  timezone: string;
+}
+
+export interface TaskRun {
+  runId: string;
+  startedAt: number;
+  finishedAt: number | null;
+  status: "running" | "ok" | "error" | "skipped";
+  resultText: string | null;
+  error: string | null;
+  trigger: string;
+}
+
+export interface Automation {
+  id: string;
+  title: string;
+  instructions: string;
+  schedule: string;
+  scheduleRaw: AutomationSchedule;
+  workspace: string;
+  enabled: boolean;
+  nextRun: number | null;
+  lastRun: number | null;
+  lastStatus: string | null;
+  runCount: number;
+  recentRuns: TaskRun[];
 }
 
 interface RuntimeConfig {
@@ -78,7 +171,10 @@ export function listSessions(): Promise<{ sessions: SessionListItem[] }> {
   return request("/v1/sessions");
 }
 
-export function init(repoPath: string, resumeSessionId?: string): Promise<{ sessionId: string; history: HistoryMessage[] }> {
+export function init(
+  repoPath: string,
+  resumeSessionId?: string,
+): Promise<{ sessionId: string; history: HistoryMessage[]; usage: TokenUsage; todos: TodoItem[]; roots: RootDir[] }> {
   return request("/v1/init", { method: "POST", body: JSON.stringify({ repoPath, resumeSessionId }) });
 }
 
@@ -94,8 +190,200 @@ export function abort(sessionId: string): Promise<void> {
   return request(`/v1/sessions/${sessionId}/abort`, { method: "POST" });
 }
 
+/** Duplicates the session's current history into a brand-new, independent session — a
+ * whole-session fork, not a message-level branch point. Throws if there's nothing to fork
+ * yet (no messages sent). */
+export function forkSession(sessionId: string): Promise<{ sessionId: string }> {
+  return request(`/v1/sessions/${sessionId}/fork`, { method: "POST" });
+}
+
+export interface SessionTreeNode {
+  id: string;
+  parentId: string | null;
+  type: string;
+  timestamp: string;
+  label?: string;
+  preview: string;
+  children: SessionTreeNode[];
+}
+
+/** Reconstructs the full branch tree `sessionId` belongs to — every ancestor and every
+ * descendant branch, not just this one session's own linear history. One node per message;
+ * node ids are `${sessionId}:${messageIndex}`, which branchSession() below expects back
+ * unchanged. See apps/server/src/session.ts's getSessionTree() for the reconstruction. */
+export function getSessionTree(sessionId: string): Promise<{ nodes: SessionTreeNode[] }> {
+  return request(`/v1/sessions/${sessionId}/tree`);
+}
+
+/** Branches off the message at `messageIndex` in the given node's session — the general form
+ * of forkSession() (forking is branching from the last message). Always creates a NEW session
+ * (a flat message array can't hold two branches at once); the caller switches to the returned
+ * id the same way it would after forkSession(). */
+export function branchSession(sessionId: string, messageIndex: number): Promise<{ sessionId: string }> {
+  return request(`/v1/sessions/${sessionId}/branch`, { method: "POST", body: JSON.stringify({ messageIndex }) });
+}
+
 export function resolvePermission(sessionId: string, toolCallId: string, outcome: ApprovalOutcome): Promise<void> {
   return request(`/v1/sessions/${sessionId}/resolvePermission`, { method: "POST", body: JSON.stringify({ toolCallId, outcome }) });
+}
+
+// -- The multi-folder Access panel: grant/revoke directories live, mid-session ------------
+
+export function listRoots(sessionId: string): Promise<{ roots: RootDir[] }> {
+  return request(`/v1/sessions/${sessionId}/roots`);
+}
+
+export function addRoot(sessionId: string, path: string, writable: boolean, label?: string): Promise<{ root: RootDir }> {
+  return request(`/v1/sessions/${sessionId}/roots`, { method: "POST", body: JSON.stringify({ path, writable, label }) });
+}
+
+export function removeRoot(sessionId: string, path: string): Promise<{ ok: boolean }> {
+  return request(`/v1/sessions/${sessionId}/roots`, { method: "DELETE", body: JSON.stringify({ path }) });
+}
+
+// -- Settings > Models ------------------------------------------------------------------
+
+export function listProviders(): Promise<{ providers: ProviderStatus[] }> {
+  return request("/v1/providers");
+}
+
+export function setProvider(name: string, input: { apiKey?: string; baseUrl?: string }): Promise<void> {
+  return request(`/v1/providers/${name}`, { method: "PUT", body: JSON.stringify(input) });
+}
+
+export function deleteProviderKey(name: string): Promise<void> {
+  return request(`/v1/providers/${name}`, { method: "DELETE" });
+}
+
+export function setDefaultModel(provider: string, modelId: string): Promise<void> {
+  return request("/v1/settings/default-model", { method: "PUT", body: JSON.stringify({ provider, modelId }) });
+}
+
+export interface GeneralSettings {
+  defaultModel: { provider: string; modelId: string };
+  autoApprove: boolean;
+  webSearchEnabled: boolean;
+}
+
+export function getSettings(): Promise<GeneralSettings> {
+  return request("/v1/settings");
+}
+
+export function setAutoApprove(enabled: boolean): Promise<void> {
+  return request("/v1/settings/auto-approve", { method: "PUT", body: JSON.stringify({ enabled }) });
+}
+
+export function setWebSearchEnabled(enabled: boolean): Promise<void> {
+  return request("/v1/settings/web-search", { method: "PUT", body: JSON.stringify({ enabled }) });
+}
+
+// -- Settings > Memory -------------------------------------------------------------------
+
+export function listMemories(): Promise<{ memories: MemoryItem[] }> {
+  return request("/v1/memory");
+}
+
+export function addMemory(content: string, scope: MemoryScope, workspace?: string): Promise<MemoryItem> {
+  return request("/v1/memory", { method: "POST", body: JSON.stringify({ content, scope, workspace }) });
+}
+
+export function deleteMemory(id: number): Promise<void> {
+  return request(`/v1/memory/${id}`, { method: "DELETE" });
+}
+
+// -- Workspace trust (gates a workspace's own .metaharn/mcp.json) ------------------------
+
+export function getWorkspaceTrust(workspace: string): Promise<{ trusted: boolean }> {
+  return request(`/v1/workspace-trust?workspace=${encodeURIComponent(workspace)}`);
+}
+
+export function setWorkspaceTrust(workspace: string, trusted: boolean): Promise<void> {
+  return request("/v1/workspace-trust", { method: "PUT", body: JSON.stringify({ workspace, trusted }) });
+}
+
+// -- Inbox — durable approval queue, across every session, not just the open one --------
+
+export interface InboxItem {
+  id: string;
+  kind: "approval" | "question";
+  sessionId: string;
+  toolCallId?: string;
+  toolName?: string;
+  arguments?: Record<string, unknown>;
+  title?: string;
+  body?: string;
+  resolved: boolean;
+  resolution?: string;
+  createdAt: number;
+  resolvedAt?: number;
+}
+
+export function listPendingInbox(): Promise<{ items: InboxItem[] }> {
+  return request("/v1/inbox");
+}
+
+/** Resolves by item id alone — works even for a session that isn't the one currently open,
+ * since the whole point of a durable Inbox is answering something without its session live. */
+export function resolveInboxItem(itemId: string, outcome: ApprovalOutcome): Promise<void> {
+  return request(`/v1/inbox/${itemId}/resolve`, { method: "POST", body: JSON.stringify({ outcome }) });
+}
+
+// -- Settings > MCP ----------------------------------------------------------------------
+
+export function listMcpServers(): Promise<{ servers: McpServer[] }> {
+  return request("/v1/mcp");
+}
+
+export function putMcpServer(name: string, input: Partial<McpServer>): Promise<void> {
+  return request(`/v1/mcp/${name}`, { method: "PUT", body: JSON.stringify(input) });
+}
+
+export function deleteMcpServer(name: string): Promise<void> {
+  return request(`/v1/mcp/${name}`, { method: "DELETE" });
+}
+
+export interface McpTestResult {
+  ok: boolean;
+  toolCount?: number;
+  tools?: string[];
+  error?: string;
+}
+
+export interface McpTestCandidate {
+  transport: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}
+
+/** Live connectivity test — connects for real, lists tools, disconnects. Never just saves
+ * a config and hopes; "Add & test" reports what actually happened. */
+export function testMcpServer(candidate: McpTestCandidate): Promise<McpTestResult> {
+  return request("/v1/mcp/test", { method: "POST", body: JSON.stringify(candidate) });
+}
+
+// -- Automations ---------------------------------------------------------------------------
+
+export function listAutomations(): Promise<{ automations: Automation[] }> {
+  return request("/v1/automations");
+}
+
+export function createAutomation(input: { title: string; instructions: string; workspace: string; schedule: AutomationSchedule }): Promise<Automation> {
+  return request("/v1/automations", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function setAutomationEnabled(id: string, enabled: boolean): Promise<Automation> {
+  return request(`/v1/automations/${id}`, { method: "PUT", body: JSON.stringify({ enabled }) });
+}
+
+export function deleteAutomation(id: string): Promise<void> {
+  return request(`/v1/automations/${id}`, { method: "DELETE" });
+}
+
+export function runAutomationNow(id: string): Promise<TaskRun> {
+  return request(`/v1/automations/${id}/run`, { method: "POST" });
 }
 
 /** Opens the event stream for a session; returns an unsubscribe function. Async because it
