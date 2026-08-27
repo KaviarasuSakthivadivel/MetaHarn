@@ -32,11 +32,10 @@ export default function App() {
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!client.hasToken()) {
-      setConnectError("No server token found — start @metaharn/server first (npm run dev:server), then reload this page.");
-      return;
-    }
-    client.listSessions().then((r) => setSessions(r.sessions)).catch(() => {});
+    client
+      .listSessions()
+      .then((r) => setSessions(r.sessions))
+      .catch((err) => setConnectError((err as Error).message));
   }, []);
 
   useEffect(() => () => unsubscribeRef.current?.(), []);
@@ -82,7 +81,7 @@ export default function App() {
     try {
       const { sessionId: id, history } = await client.init(path, resumeId);
       unsubscribeRef.current?.();
-      unsubscribeRef.current = client.subscribe(id, handleEvent);
+      unsubscribeRef.current = await client.subscribe(id, handleEvent);
       setSessionId(id);
       setRepoPath(path);
       setMessages(historyToMessages(history));

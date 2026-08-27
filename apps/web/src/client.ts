@@ -1,9 +1,5 @@
 /** Thin client for @metaharn/server's HTTP + WebSocket API — see apps/server/src/index.ts. */
 
-const BASE = __METAHARN_SERVER_URL__;
-const WS_BASE = __METAHARN_WS_URL__;
-const TOKEN = __METAHARN_TOKEN__;
-
 export type ApprovalOutcome = "once" | "always_tool" | "always_command" | "always_domain" | "readonly_session" | "deny";
 
 export type HistoryMessage = { role: "user" | "assistant" | "tool"; text: string };
@@ -27,18 +23,47 @@ export interface SessionListItem {
   firstMessage: string;
 }
 
+interface RuntimeConfig {
+  token: string;
+  serverUrl: string;
+  wsUrl: string;
+}
+
+// Fetched live from Vite's own dev-server middleware (vite.config.ts's tokenEndpoint plugin) on
+// first use, with retries — never baked into the bundle at build time. See vite.config.ts's
+// module doc for exactly why: a build-time constant races @metaharn/server's own startup under
+// `dev:full`'s concurrent launch and can permanently strand the page with an empty token.
+let configPromise: Promise<RuntimeConfig> | null = null;
+
+async function getConfig(): Promise<RuntimeConfig> {
+  if (!configPromise) {
+    configPromise = (async () => {
+      const maxAttempts = 15;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const res = await fetch("/__metaharn-config");
+          const config = (await res.json()) as RuntimeConfig;
+          if (config.token) return config;
+        } catch {
+          // dev server itself not up yet — retry
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+      throw new Error("Could not reach @metaharn/server — is it running? (npm run dev:server)");
+    })();
+  }
+  return configPromise;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const { token, serverUrl } = await getConfig();
+  const res = await fetch(`${serverUrl}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", "X-MetaHarn-Token": TOKEN, ...init.headers },
+    headers: { "Content-Type": "application/json", "X-MetaHarn-Token": token, ...init.headers },
   });
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) throw new Error(typeof body.error === "string" ? body.error : `request failed: ${res.status}`);
   return body as T;
-}
-
-export function hasToken(): boolean {
-  return TOKEN.length > 0;
 }
 
 export function health(): Promise<{ ok: boolean }> {
@@ -73,9 +98,13 @@ export function resolvePermission(sessionId: string, toolCallId: string, outcome
   return request(`/v1/sessions/${sessionId}/resolvePermission`, { method: "POST", body: JSON.stringify({ toolCallId, outcome }) });
 }
 
-/** Opens the event stream for a session; returns an unsubscribe function. */
-export function subscribe(sessionId: string, onEvent: (event: ServerEvent) => void): () => void {
-  const ws = new WebSocket(`${WS_BASE}/v1/sessions/${sessionId}/events?token=${encodeURIComponent(TOKEN)}`);
+/** Opens the event stream for a session; returns an unsubscribe function. Async because it
+ * needs the (possibly still-loading) runtime config first — callers don't await it directly
+ * (App.tsx fires it and lets messages arrive whenever the socket actually opens), but the
+ * returned unsubscribe is still available synchronously-ish via the promise chain. */
+export async function subscribe(sessionId: string, onEvent: (event: ServerEvent) => void): Promise<() => void> {
+  const { token, wsUrl } = await getConfig();
+  const ws = new WebSocket(`${wsUrl}/v1/sessions/${sessionId}/events?token=${encodeURIComponent(token)}`);
   ws.addEventListener("message", (ev) => {
     try {
       onEvent(JSON.parse(ev.data as string) as ServerEvent);
