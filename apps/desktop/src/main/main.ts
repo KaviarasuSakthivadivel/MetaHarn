@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain, nativeImage, shell } from "electron";
 import { disposeSessionFor, registerIpcHandlers } from "./ipc.js";
 import { disposeAllPtysFor, registerPtyIpcHandlers } from "./pty-ipc.js";
+import { startAutomationRuntime, stopAutomationRuntime } from "./automation.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -174,7 +175,10 @@ const createBranchExplorerWindow = (cwd: string, branch?: string) => {
 app.on("render-process-gone", (_e, _wc, details) => console.error("[metaharn] app render-process-gone", details));
 app.on("child-process-gone", (_e, details) => console.error("[metaharn] child-process-gone", details));
 app.on("before-quit", () => console.log("[metaharn] before-quit"));
-app.on("will-quit", () => console.log("[metaharn] will-quit"));
+app.on("will-quit", () => {
+  console.log("[metaharn] will-quit");
+  void stopAutomationRuntime();
+});
 process.on("uncaughtException", (err) => console.error("[metaharn] uncaughtException in main", err));
 process.on("exit", (code) => console.log("[metaharn] main process exit", code));
 
@@ -188,6 +192,10 @@ app.whenReady().then(() => {
   }
   registerIpcHandlers();
   registerPtyIpcHandlers();
+  // Independent of any window/session — see automation.ts's module doc. Started once here,
+  // never per-window, so scheduled tasks keep firing even while every window is closed on
+  // macOS (the app itself stays running — see window-all-closed below).
+  startAutomationRuntime();
   // Registered here rather than inside ipc.ts's registerIpcHandlers() —
   // createCommitDiffWindow is local to this file, and ipc.ts is imported
   // BY main.ts, so importing main.ts's window-creation back into ipc.ts

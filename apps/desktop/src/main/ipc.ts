@@ -145,7 +145,7 @@ export function registerIpcHandlers() {
         const useOwnedEngine = resumeSessionPath ? isOwnedSessionPath(resumeSessionPath) : ownedEngineEnabled();
 
         if (useOwnedEngine) {
-          const session = createOwnedEngineSession(repoPath, { resumeSessionPath });
+          const session = await createOwnedEngineSession(repoPath, { resumeSessionPath });
           const unsubscribe = session.subscribe((e) => pushEvent(sender, e));
           sessionsByWindow.set(sender.id, { kind: "owned", session, unsubscribe });
 

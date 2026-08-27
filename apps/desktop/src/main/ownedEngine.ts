@@ -39,8 +39,37 @@ import { loadMcpTools } from "@metaharn/engine/src/mcp/tools.js";
 import { SqliteMemoryStore } from "@metaharn/engine/src/memory/sqliteStore.js";
 import { memoryTools } from "@metaharn/engine/src/memory/tools.js";
 import { renderMemoryBlock } from "@metaharn/engine/src/memory/types.js";
-import type { ApprovalOutcome, ChatMessage, EngineEvent, PermissionRequest, ToolDefinition } from "@metaharn/engine/src/types.js";
+import { Reviewer } from "@metaharn/engine/src/reviewer.js";
+import { capture } from "@metaharn/engine/src/trust/sessionFacts.js";
+import { AuditStore } from "@metaharn/engine/src/trust/auditStore.js";
+import { createSchedulingTools } from "@metaharn/engine/src/automation/tools.js";
+import type { TaskStore } from "@metaharn/engine/src/automation/store.js";
+import type {
+  ApprovalOutcome,
+  ChatMessage,
+  EngineEvent,
+  PermissionRequest,
+  Reviewer as ReviewerContract,
+  ToolDefinition,
+} from "@metaharn/engine/src/types.js";
 import { buildContextDoc, whoOwns } from "@metaharn/context-engine";
+
+/** Opt-in Auto-Approve mode: an LLM reviewer judges routine approval-required actions before
+ * they reach the human, so only the genuinely questionable ones interrupt. Off by default —
+ * matches this codebase's other experimental-toggle convention (METAHARN_CHAT_ENGINE). */
+export function autoApproveEnabled(): boolean {
+  return process.env.METAHARN_AUTO_APPROVE === "1";
+}
+
+/** Set once at app startup (main.ts, alongside automation.ts's startAutomationRuntime()) so
+ * every owned-engine session can register scheduling tools against the ONE shared TaskStore.
+ * A setter, not a direct import of automation.ts, specifically to avoid a circular import:
+ * automation.ts's scheduled-task runner needs to construct sessions (imports THIS file), so
+ * this file must not import automation.ts back. */
+let schedulingStore: TaskStore | undefined;
+export function setSchedulingStore(store: TaskStore): void {
+  schedulingStore = store;
+}
 
 const MODEL_PROVIDER = process.env.METAHARN_MODEL_PROVIDER ?? "anthropic";
 const MODEL_ID = process.env.METAHARN_MODEL_ID ?? "claude-opus-4-5";
@@ -245,6 +274,24 @@ export interface OwnedEngineSessionOptions {
   initialMessages?: ChatMessage[];
   createdAt?: string;
   title?: string;
+  /** Rendered by sessionFacts.capture().render() at session-open time — only computed when
+   * autoApproveEnabled() (session facts exist purely to feed the reviewer; no other consumer
+   * in this pass). Passed in rather than captured inside the constructor because capture() is
+   * async and a constructor can't be — see createOwnedEngineSession. */
+  knownWorld?: string;
+  /**
+   * True for a scheduled-automation run (automation.ts) with no human watching: the approver
+   * auto-denies anything not already covered by `taskRules` instead of parking a promise no
+   * one will ever resolve — the alternative is an unattended run hanging forever the first
+   * time it hits an approval-gated action outside its granted scope. A real Inbox (queue an
+   * approval for a human to answer later, OpenWorker's HITL tier) is the eventual fix; this is
+   * the honest fail-closed behavior until that exists.
+   */
+  unattended?: boolean;
+  /** Target-bound standing grants from the owning ScheduledTask (automation/models.ts's
+   * standingRules()) — auto-allows exactly the external-risk calls the user approved at
+   * task-creation time, nothing broader. */
+  taskRules?: Map<string, Set<string>>;
 }
 
 export class OwnedEngineSession {
@@ -255,6 +302,7 @@ export class OwnedEngineSession {
   private readonly engine: Engine;
   private readonly memoryStore: SqliteMemoryStore;
   private readonly mcpManager = new MCPManager();
+  private readonly auditStore: AuditStore;
   private listener: ((event: OwnedSessionEvent) => void) | null = null;
   private readonly pendingApprovals = new Map<string, (outcome: ApprovalOutcome) => void>();
   private running = false;
@@ -289,14 +337,30 @@ export class OwnedEngineSession {
     ];
     const memoryBlock = renderMemoryBlock(remembered);
 
+    // Scheduling tools (create/list/update/delete_scheduled_task) — only when
+    // automation.ts's startAutomationRuntime() has run (main.ts, at app startup) and injected
+    // the shared store via setSchedulingStore(). Every session shares the ONE store so a task
+    // created from any chat is visible/editable from any other.
+    if (schedulingStore) {
+      registry.registerAll(
+        createSchedulingTools(schedulingStore, {
+          origin: { surface: "chat", sessionId: this.sessionId, agent: "owned" },
+          defaultWorkspace: repoPath,
+        }),
+      );
+    }
+
+    this.auditStore = new AuditStore(join(stateDir(), "audit.db"));
+
     const permissions = new PermissionEngine({
       workspaceRoot: repoPath,
-      mode: "interactive",
+      mode: autoApproveEnabled() ? "auto-approve" : "interactive",
       // No MetaHarn-specific state files exist yet to protect here (unlike OpenWorker's
       // ~/.config/coworker/*.json — MetaHarn's own state lives in Postgres/.env, not local
       // JSON) — see permissions/engine.ts's own doc comment on this option. Revisit once
       // there's a real local settings file worth floor-protecting.
       protectedPaths: [],
+      taskRules: opts.taskRules,
     });
 
     let instructions = `${BASE_INSTRUCTIONS}\n\n${buildContextDoc(repoPath)}`;
@@ -309,10 +373,21 @@ export class OwnedEngineSession {
       model: `${MODEL_PROVIDER}:${MODEL_ID}`,
       instructions,
       messages: opts.initialMessages,
-      approver: (req: PermissionRequest) =>
-        new Promise<ApprovalOutcome>((resolve) => {
-          this.pendingApprovals.set(req.toolCallId, resolve);
-        }),
+      auditSink: (event) => this.auditStore.append({ ...event, sessionId: this.sessionId }),
+      approver: opts.unattended
+        ? async () => "deny"
+        : (req: PermissionRequest) =>
+            new Promise<ApprovalOutcome>((resolve) => {
+              this.pendingApprovals.set(req.toolCallId, resolve);
+            }),
+      // Auto-Approve reviewer (METAHARN_AUTO_APPROVE=1): attached only when the mode above is
+      // "auto-approve" — Engine consults it on every needsUser/non-human-only decision
+      // regardless of mode, so an unattached reviewer (the common case) is how "auto-approve
+      // behaves like interactive with no reviewer" actually holds, matching OpenWorker's own
+      // "attached only when the flag is on" rule.
+      reviewer: autoApproveEnabled()
+        ? (new Reviewer({ provider, model: `${MODEL_PROVIDER}:${MODEL_ID}`, knownWorld: opts.knownWorld }) as ReviewerContract)
+        : undefined,
     });
 
     // MCP: connects in the background, best-effort, never blocks session creation — a slow
@@ -449,6 +524,7 @@ export class OwnedEngineSession {
     for (const resolve of this.pendingApprovals.values()) resolve("deny");
     this.pendingApprovals.clear();
     this.memoryStore.close();
+    this.auditStore.close();
     void this.mcpManager.aclose();
   }
 
@@ -459,21 +535,34 @@ export class OwnedEngineSession {
 
 export interface CreateOwnedEngineSessionOptions {
   resumeSessionPath?: string;
+  /** Set by automation.ts for a scheduled-task run — see OwnedEngineSessionOptions. */
+  unattended?: boolean;
+  taskRules?: Map<string, Set<string>>;
 }
 
-export function createOwnedEngineSession(repoPath: string, options: CreateOwnedEngineSessionOptions = {}): OwnedEngineSession {
-  if (options.resumeSessionPath) {
-    const record = loadOwnedSessionRecord(options.resumeSessionPath);
-    if (record) {
-      return new OwnedEngineSession(record.cwd, {
-        sessionId: record.id,
-        initialMessages: record.messages,
-        createdAt: record.createdAt,
-        title: record.title,
-      });
-    }
-  }
-  return new OwnedEngineSession(repoPath);
+/** Async because session facts (sessionFacts.capture(), for the reviewer's knownWorld) reads
+ * git remotes off disk — only actually done when autoApproveEnabled(), so the common case
+ * pays nothing for it. */
+export async function createOwnedEngineSession(
+  repoPath: string,
+  options: CreateOwnedEngineSessionOptions = {},
+): Promise<OwnedEngineSession> {
+  const record = options.resumeSessionPath ? loadOwnedSessionRecord(options.resumeSessionPath) : null;
+  const cwd = record?.cwd ?? repoPath;
+
+  const knownWorld = autoApproveEnabled()
+    ? (await capture({ roots: [{ path: cwd, writable: true }], workspace: cwd })).render()
+    : undefined;
+
+  return new OwnedEngineSession(cwd, {
+    sessionId: record?.id,
+    initialMessages: record?.messages,
+    createdAt: record?.createdAt,
+    title: record?.title,
+    knownWorld,
+    unattended: options.unattended,
+    taskRules: options.taskRules,
+  });
 }
 
 export function ownedEngineEnabled(): boolean {
