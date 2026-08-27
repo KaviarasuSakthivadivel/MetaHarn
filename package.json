@@ -9,7 +9,10 @@
   ],
   "scripts": {
     "dev:desktop": "npm run start --workspace=apps/desktop",
-    "db:migrate": "npm run migrate --workspace=packages/db"
+    "dev:server": "npm run dev --workspace=apps/server",
+    "db:migrate": "npm run migrate --workspace=packages/db",
+    "rebuild:for-electron": "electron-rebuild -f -w better-sqlite3 --version $(node -p \"require('./node_modules/electron/package.json').version\")",
+    "rebuild:for-node": "npm rebuild better-sqlite3"
   },
   "engines": {
     "node": ">=20"

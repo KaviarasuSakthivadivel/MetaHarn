@@ -1,0 +1,26 @@
+{
+  "name": "@metaharn/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The MetaHarn web/Tauri surface — a normal web app talking to @metaharn/server over HTTP + WebSocket. Runs standalone in a browser (`npm run dev`), or wrapped by the Tauri shell in src-tauri/ (`npm run tauri dev`) — same UI code either way, matching OpenWorker's own surfaces/gui.",
+  "scripts": {
+    "dev": "vite",
+    "dev:full": "concurrently -n server,web -c blue,green \"npm --prefix ../server run dev\" \"vite\"",
+    "build": "tsc --noEmit && vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.1"
+  }
+}

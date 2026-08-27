@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for MetaHarn's main window — deliberately minimal: this webview only ever talks to @metaharn/server over plain fetch/WebSocket, no Tauri-native commands are invoked from the frontend in this pass.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

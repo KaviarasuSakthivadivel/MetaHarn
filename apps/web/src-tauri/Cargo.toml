@@ -1,0 +1,20 @@
+[package]
+name = "metaharn-web"
+version = "0.1.0"
+description = "MetaHarn — Tauri shell around @metaharn/server, mirroring OpenWorker's own process-supervisor-plus-webview architecture (see docs/research/openworker-integration.md)."
+edition = "2021"
+
+[lib]
+# Tauri v2's mobile-compatible split: main.rs is a thin binary entry point, lib.rs holds the
+# actual app so it can also be linked into iOS/Android targets later without duplicating it —
+# not used for that here, just following the standard `tauri-cli` v2 scaffold shape.
+name = "metaharn_web_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

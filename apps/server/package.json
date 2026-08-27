@@ -1,0 +1,23 @@
+{
+  "name": "@metaharn/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local agent server — the OpenWorker-shaped backend for MetaHarn's web/Tauri surface: one process hosting @metaharn/engine over HTTP + WebSocket, so the UI (browser or Tauri webview) never runs the engine itself.",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "@metaharn/context-engine": "*",
+    "@metaharn/engine": "*",
+    "dotenv": "^17.4.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3"
+  }
+}
