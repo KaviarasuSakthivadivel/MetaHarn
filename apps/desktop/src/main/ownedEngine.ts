@@ -13,9 +13,8 @@
  * needs, rather than the barrel, is what keeps every OTHER unused module (automation,
  * pdf-support) from being dragged in and needing the same treatment for no reason.
  *
- * Real, disclosed gaps in this pass: no session tree/branching, no context-window stats, no
- * Auto-Approve reviewer, no workspace-trust gate on the MCP config (global file only, no
- * per-project override), no memory-off Settings toggle (saving is always on).
+ * Real, disclosed gaps in this pass: no workspace-trust gate on the MCP config (global file
+ * only, no per-project override), no memory-off Settings toggle (saving is always on).
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -40,6 +39,7 @@ import { SqliteMemoryStore } from "@metaharn/engine/src/memory/sqliteStore.js";
 import { memoryTools } from "@metaharn/engine/src/memory/tools.js";
 import { renderMemoryBlock } from "@metaharn/engine/src/memory/types.js";
 import { Reviewer } from "@metaharn/engine/src/reviewer.js";
+import { createCompactionHook } from "@metaharn/engine/src/compaction.js";
 import { capture } from "@metaharn/engine/src/trust/sessionFacts.js";
 import { AuditStore } from "@metaharn/engine/src/trust/auditStore.js";
 import { createSchedulingTools } from "@metaharn/engine/src/automation/tools.js";
@@ -48,17 +48,20 @@ import type {
   ApprovalOutcome,
   ChatMessage,
   EngineEvent,
-  PermissionRequest,
   Reviewer as ReviewerContract,
   ToolDefinition,
 } from "@metaharn/engine/src/types.js";
 import { buildContextDoc, whoOwns } from "@metaharn/context-engine";
+import { getAutoApproveSetting, getDefaultModel, PROVIDER_CATALOG, resolveProviderCredential } from "./ownedProviders.js";
+import { isWorkspaceTrusted } from "./ownedWorkspaceTrust.js";
+import { selfWakeToolsFor } from "./ownedSelfWake.js";
+import { inboxApprover, inboxStore, toInboxResolution } from "./ownedInbox.js";
 
 /** Opt-in Auto-Approve mode: an LLM reviewer judges routine approval-required actions before
  * they reach the human, so only the genuinely questionable ones interrupt. Off by default —
  * matches this codebase's other experimental-toggle convention (METAHARN_CHAT_ENGINE). */
 export function autoApproveEnabled(): boolean {
-  return process.env.METAHARN_AUTO_APPROVE === "1";
+  return getAutoApproveSetting() ?? process.env.METAHARN_AUTO_APPROVE === "1";
 }
 
 /** Set once at app startup (main.ts, alongside automation.ts's startAutomationRuntime()) so
@@ -71,13 +74,19 @@ export function setSchedulingStore(store: TaskStore): void {
   schedulingStore = store;
 }
 
-const MODEL_PROVIDER = process.env.METAHARN_MODEL_PROVIDER ?? "anthropic";
-const MODEL_ID = process.env.METAHARN_MODEL_ID ?? "claude-opus-4-5";
-const KNOWN_PROVIDERS = ["anthropic", "openai"];
+const KNOWN_PROVIDERS = PROVIDER_CATALOG.map((p) => p.name);
 
-/** Read-only, mirroring agent.ts's getModelConfig() for the Settings page. */
+// Mirrors apps/server/src/session.ts's identical table — see that file's comment on why only
+// these two providers get a real figure instead of createCompactionHook's 128k default.
+const CONTEXT_WINDOW_BY_PROVIDER: Record<string, number> = {
+  anthropic: 200_000,
+  openai: 128_000,
+};
+
+/** Read-only, mirroring agent.ts's getModelConfig() for the Settings page. Reflects the
+ * CURRENT default (Settings > Models can change it at runtime) — not a static snapshot. */
 export function getOwnedEngineModelConfig() {
-  return { provider: MODEL_PROVIDER, modelId: MODEL_ID };
+  return getDefaultModel();
 }
 
 // -- local state directory (this backend's own — Pi has its own, separate, convention) ------
@@ -112,6 +121,13 @@ export function isOwnedSessionPath(path: string): boolean {
   return dirname(path) === ownedSessionsDir();
 }
 
+/** Mirrors apps/server/src/session.ts's findSessionPath — used by automation.ts's self-wake
+ * resume to turn a bare session id (all a Wake record has) back into a resumable path. */
+export function findOwnedSessionPath(id: string): string | null {
+  const path = sessionFilePath(id);
+  return loadOwnedSessionRecord(path) ? path : null;
+}
+
 interface OwnedSessionRecord {
   id: string;
   cwd: string;
@@ -119,6 +135,14 @@ interface OwnedSessionRecord {
   createdAt: string;
   updatedAt: string;
   messages: ChatMessage[];
+  /** Set only on a session created via branchFrom()/fork() — the session it was duplicated
+   * from, so the sidebar can show "forked from <name>" instead of the lineage silently
+   * disappearing. */
+  parentId?: string;
+  /** Index into the PARENT's messages at branch time — see apps/server/src/session.ts's
+   * identical field for the full rationale (getSessionTree() needs it to graft a branch onto
+   * the exact node it split from). */
+  branchPointIndex?: number;
 }
 
 function loadOwnedSessionRecord(path: string): OwnedSessionRecord | null {
@@ -157,6 +181,7 @@ export interface OwnedSessionListItem {
   modified: Date;
   messageCount: number;
   firstMessage: string;
+  parentId?: string;
 }
 
 /** Disk scan mirroring SessionManager.listAll()'s job, for this backend's own transcript
@@ -181,6 +206,7 @@ export function listOwnedSessions(): OwnedSessionListItem[] {
       modified: new Date(record.updatedAt),
       messageCount: record.messages.length,
       firstMessage: firstUserText(record.messages),
+      parentId: record.parentId,
     });
   }
   return items;
@@ -189,33 +215,36 @@ export function listOwnedSessions(): OwnedSessionListItem[] {
 export interface OwnedHistoryMessage {
   role: "user" | "assistant" | "tool";
   text: string;
+  /** This message's position in the underlying ChatMessage[] — what "branch from here" needs
+   * (getOwnedSessionTree()'s node ids are `${sessionId}:${index}` in this exact same array).
+   * Not the same as this item's position in the returned array: the loop below skips the
+   * seeded system message and any empty tool-call-only assistant message. */
+  index: number;
 }
 
 /** ChatMessage[] -> the same flat {role, text} shape sessions.ts's messagesToHistory()
  * produces for Pi, so a resumed owned-engine session renders identically to a resumed Pi one. */
 export function ownedMessagesToHistory(messages: ChatMessage[]): OwnedHistoryMessage[] {
   const history: OwnedHistoryMessage[] = [];
-  for (const msg of messages) {
-    if (typeof msg.content !== "string" || !msg.content) continue;
-    if (msg.role === "user") history.push({ role: "user", text: msg.content });
-    else if (msg.role === "assistant") history.push({ role: "assistant", text: msg.content });
-    else if (msg.role === "tool") history.push({ role: "tool", text: msg.content });
-  }
+  messages.forEach((msg, index) => {
+    if (typeof msg.content !== "string" || !msg.content) return;
+    if (msg.role === "user") history.push({ role: "user", text: msg.content, index });
+    else if (msg.role === "assistant") history.push({ role: "assistant", text: msg.content, index });
+    else if (msg.role === "tool") history.push({ role: "tool", text: msg.content, index });
+  });
   return history;
 }
 
 function buildProviderClient(name: string): ProviderClient {
+  const entry = PROVIDER_CATALOG.find((p) => p.name === name);
+  if (!entry) throw new Error(`unknown provider: ${name}`);
+  const { apiKey, baseUrl } = resolveProviderCredential(name);
   if (name === "anthropic") {
-    const key = process.env.ANTHROPIC_API_KEY;
-    if (!key) throw new Error("ANTHROPIC_API_KEY is not set — required for the owned engine's anthropic provider");
-    return new AnthropicProvider(key);
+    if (!apiKey) throw new Error("Anthropic isn't set up yet — add a key in Settings.");
+    return new AnthropicProvider(apiKey);
   }
-  if (name === "openai") {
-    const key = process.env.OPENAI_API_KEY;
-    if (!key) throw new Error("OPENAI_API_KEY is not set — required for the owned engine's openai provider");
-    return new OpenAIProvider(key);
-  }
-  throw new Error(`unknown provider: ${name}`);
+  if (!entry.noKeyNeeded && !apiKey) throw new Error(`${entry.displayName} isn't set up yet — add a key in Settings.`);
+  return new OpenAIProvider(apiKey ?? "ollama", { baseURL: baseUrl });
 }
 
 function whoOwnsTool(repoPath: string): ToolDefinition {
@@ -267,7 +296,11 @@ export type OwnedSessionEvent =
   | { type: "tool_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
   | { type: "permission_required"; toolCallId: string; toolName: string; args: unknown; reason: string }
   | { type: "agent_end" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  /** A user or assistant message just landed at `index` in the underlying ChatMessage[] — what
+   * the renderer needs to offer "branch from here" on a specific chat bubble live, without
+   * waiting for a page reload's ownedMessagesToHistory() to supply it. */
+  | { type: "message_index"; role: "user" | "assistant"; index: number };
 
 export interface OwnedEngineSessionOptions {
   sessionId?: string;
@@ -292,6 +325,10 @@ export interface OwnedEngineSessionOptions {
    * standingRules()) — auto-allows exactly the external-risk calls the user approved at
    * task-creation time, nothing broader. */
   taskRules?: Map<string, Set<string>>;
+  /** Carried forward from the OwnedSessionRecord on resume so a branched session doesn't lose
+   * its lineage the next time it persists — see the class fields below. */
+  parentId?: string;
+  branchPointIndex?: number;
 }
 
 export class OwnedEngineSession {
@@ -299,12 +336,17 @@ export class OwnedEngineSession {
   readonly cwd: string;
   private title: string;
   private readonly createdAt: string;
+  // Set once at construction, never reassigned — persist() must keep re-writing these on every
+  // save (they're not part of `messages`), or a branched session silently reverts to looking
+  // like a root the moment it's resumed and sends one more turn. Mirrors the identical fix in
+  // apps/server/src/session.ts.
+  private readonly parentId?: string;
+  private readonly branchPointIndex?: number;
   private readonly engine: Engine;
   private readonly memoryStore: SqliteMemoryStore;
   private readonly mcpManager = new MCPManager();
   private readonly auditStore: AuditStore;
   private listener: ((event: OwnedSessionEvent) => void) | null = null;
-  private readonly pendingApprovals = new Map<string, (outcome: ApprovalOutcome) => void>();
   private running = false;
   errorMessage: string | undefined;
 
@@ -313,10 +355,13 @@ export class OwnedEngineSession {
     this.cwd = repoPath;
     this.createdAt = opts.createdAt ?? new Date().toISOString();
     this.title = opts.title ?? deriveTitle(opts.initialMessages ?? []);
+    this.parentId = opts.parentId;
+    this.branchPointIndex = opts.branchPointIndex;
 
+    const { provider: defaultProvider, modelId: defaultModelId } = getDefaultModel();
     const provider = new ProviderRouter({
       buildClient: buildProviderClient,
-      defaultProvider: MODEL_PROVIDER,
+      defaultProvider,
       knownProviders: KNOWN_PROVIDERS,
     });
 
@@ -328,6 +373,7 @@ export class OwnedEngineSession {
     registry.register(whoOwnsTool(repoPath));
     registry.registerAll(createFileTools(repoPath));
     registry.register(createRunShellTool(repoPath));
+    registry.registerAll(selfWakeToolsFor(this.sessionId));
 
     this.memoryStore = new SqliteMemoryStore(memoryDbPath());
     registry.registerAll(memoryTools({ store: this.memoryStore, workspace: repoPath, savingEnabled: () => true }));
@@ -366,27 +412,29 @@ export class OwnedEngineSession {
     let instructions = `${BASE_INSTRUCTIONS}\n\n${buildContextDoc(repoPath)}`;
     if (memoryBlock) instructions += `\n\n${MEMORY_GUIDANCE}\n\n${memoryBlock}`;
 
+    const model = `${defaultProvider}:${defaultModelId}`;
+
     this.engine = new Engine({
       provider,
       registry,
       permissions,
-      model: `${MODEL_PROVIDER}:${MODEL_ID}`,
+      model,
       instructions,
       messages: opts.initialMessages,
+      compaction: createCompactionHook({ provider, model, contextWindow: CONTEXT_WINDOW_BY_PROVIDER[defaultProvider] }),
       auditSink: (event) => this.auditStore.append({ ...event, sessionId: this.sessionId }),
-      approver: opts.unattended
-        ? async () => "deny"
-        : (req: PermissionRequest) =>
-            new Promise<ApprovalOutcome>((resolve) => {
-              this.pendingApprovals.set(req.toolCallId, resolve);
-            }),
+      // Interactive approvals go through the durable Inbox (ownedInbox.ts), not a bare
+      // in-memory resolver — closing this session (or the whole app) with an approval still
+      // outstanding no longer silently denies it; resumePending() picks the exact same wait
+      // back up next time this session loads.
+      approver: opts.unattended ? async () => "deny" as ApprovalOutcome : inboxApprover(inboxStore(), this.sessionId),
       // Auto-Approve reviewer (METAHARN_AUTO_APPROVE=1): attached only when the mode above is
       // "auto-approve" — Engine consults it on every needsUser/non-human-only decision
       // regardless of mode, so an unattached reviewer (the common case) is how "auto-approve
       // behaves like interactive with no reviewer" actually holds, matching OpenWorker's own
       // "attached only when the flag is on" rule.
       reviewer: autoApproveEnabled()
-        ? (new Reviewer({ provider, model: `${MODEL_PROVIDER}:${MODEL_ID}`, knownWorld: opts.knownWorld }) as ReviewerContract)
+        ? (new Reviewer({ provider, model, knownWorld: opts.knownWorld }) as ReviewerContract)
         : undefined,
     });
 
@@ -398,7 +446,10 @@ export class OwnedEngineSession {
   }
 
   private async loadMcpToolsInBackground(registry: ToolRegistry): Promise<void> {
-    const servers = loadMcpServers({ global: mcpConfigPath() }).filter((s) => s.enabled);
+    const servers = loadMcpServers(
+      { global: mcpConfigPath(), workspace: join(this.cwd, ".metaharn", "mcp.json") },
+      { workspaceTrusted: isWorkspaceTrusted(this.cwd) },
+    ).filter((s) => s.enabled);
     for (const server of servers) {
       try {
         registry.registerAll(await loadMcpTools(this.mcpManager, server));
@@ -416,10 +467,16 @@ export class OwnedEngineSession {
   }
 
   resolvePermission(toolCallId: string, outcome: ApprovalOutcome): void {
-    const resolve = this.pendingApprovals.get(toolCallId);
-    if (!resolve) return;
-    this.pendingApprovals.delete(toolCallId);
-    resolve(outcome);
+    const item = inboxStore().forToolCall(this.sessionId, toolCallId);
+    if (!item) return;
+    inboxStore().resolve(item.id, toInboxResolution(outcome));
+  }
+
+  /** Picks back up any tool call still awaiting an answer from a PRIOR run of this session —
+   * see apps/server/src/session.ts's identical resumePending() for the full rationale.
+   * Engine.resume() is a safe no-op when there's nothing pending. */
+  resumePending(): void {
+    void this.drive(this.engine.resume());
   }
 
   private async drive(events: AsyncGenerator<EngineEvent>): Promise<void> {
@@ -436,6 +493,43 @@ export class OwnedEngineSession {
     }
   }
 
+  /** Writes a NEW, independent session file containing a PREFIX of this session's current
+   * messages (through and including messageIndex) — the general form of "fork": branching from
+   * the last message reproduces the old whole-session fork() behavior exactly (the owned-engine
+   * equivalent of Pi's SessionManager.createBranchedSession()), and branching from an earlier
+   * index is a genuine mid-conversation rewind-and-diverge, matching Pi's own tree branching.
+   * Returns null when there's nothing to fork yet or the index is out of range, matching Pi's
+   * own "nothing to fork yet" case (ipc.ts's forkChatSession handler already shows that alert
+   * for a null result). */
+  branchFrom(messageIndex: number): string | null {
+    // Engine's constructor always seeds messages[0] with a system prompt derived from
+    // `instructions` — messages.length is never actually 0 for a real session, so "nothing
+    // to fork yet" has to mean "no real turn happened," i.e. no user message at all.
+    if (!this.engine.messages.some((m) => m.role === "user")) return null;
+    if (messageIndex < 0 || messageIndex >= this.engine.messages.length) return null;
+    const newId = randomUUID();
+    const record: OwnedSessionRecord = {
+      id: newId,
+      cwd: this.cwd,
+      title: this.title,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: structuredClone(this.engine.messages.slice(0, messageIndex + 1)),
+      parentId: this.sessionId,
+      branchPointIndex: messageIndex,
+    };
+    const path = sessionFilePath(newId);
+    writeFileSync(path, JSON.stringify(record));
+    return path;
+  }
+
+  /** Whole-session duplicate — branching from the last message. Kept as its own method since
+   * "Fork" is a distinct, simpler user-facing action from picking a branch point in the tree
+   * view, even though it's now just branchFrom's boundary case. */
+  fork(): string | null {
+    return this.branchFrom(this.engine.messages.length - 1);
+  }
+
   private persist(): void {
     if (this.engine.messages.length === 0) return;
     if (this.title === "New chat") this.title = deriveTitle(this.engine.messages);
@@ -446,6 +540,8 @@ export class OwnedEngineSession {
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
       messages: this.engine.messages,
+      parentId: this.parentId,
+      branchPointIndex: this.branchPointIndex,
     };
     try {
       writeFileSync(sessionFilePath(this.sessionId), JSON.stringify(record));
@@ -456,6 +552,12 @@ export class OwnedEngineSession {
 
   private forward(event: EngineEvent): void {
     switch (event.type) {
+      case "user_message":
+        this.listener?.({ type: "message_index", role: "user", index: event.index });
+        break;
+      case "assistant_message":
+        this.listener?.({ type: "message_index", role: "assistant", index: event.index });
+        break;
       case "text_delta":
         this.listener?.({ type: "text_delta", delta: event.text });
         break;
@@ -482,6 +584,12 @@ export class OwnedEngineSession {
           args: event.arguments,
           reason: event.reason,
         });
+        // See apps/server/src/session.ts's identical fix for the full rationale: this event
+        // means the engine is about to suspend on an Inbox wait that might outlive this
+        // process, and this.messages already has everything resumePending() needs to pick it
+        // back up — without persisting here, the Inbox row survives a crash but the
+        // conversation it belongs to doesn't.
+        this.persist();
         break;
       case "turn_end":
         this.listener?.({ type: "agent_end" });
@@ -491,6 +599,10 @@ export class OwnedEngineSession {
         this.errorMessage = event.error;
         this.listener?.({ type: "error", message: event.error });
         break;
+      // "usage": not forwarded as a live event — getSessionStats() (below) exposes the same
+      // running total, polled by the renderer at the same points (ready/agent_end) Pi's own
+      // stats already are, via the existing ContextWindowPanel. A second, redundant push
+      // channel for the identical number isn't worth the extra event type.
       // turn_start / assistant_message: no Pi-vocabulary equivalent the renderer listens for
       // (the deltas already streamed the same content) — intentionally not forwarded.
     }
@@ -521,8 +633,9 @@ export class OwnedEngineSession {
 
   dispose(): void {
     this.listener = null;
-    for (const resolve of this.pendingApprovals.values()) resolve("deny");
-    this.pendingApprovals.clear();
+    // Deliberately NOT auto-denying pending approvals here anymore — the whole point of the
+    // durable Inbox (ownedInbox.ts) is that a pending row survives this session being torn
+    // down; resumePending() picks it back up on next load instead.
     this.memoryStore.close();
     this.auditStore.close();
     void this.mcpManager.aclose();
@@ -530,6 +643,40 @@ export class OwnedEngineSession {
 
   get messages() {
     return this.engine.messages;
+  }
+
+  /** Same shape preload.ts's SessionStats expects (kept local rather than importing that
+   * type — see OwnedSessionListItem's doc comment above on why main-process code must never
+   * import from preload.ts). `cost` is always 0: unlike Pi, this engine doesn't have a
+   * per-provider pricing table to compute it from, and 0 is honest where a guessed number
+   * wouldn't be. `contextUsage` is left undefined for the same reason — `Engine.usage` is a
+   * running total across the whole session, not the latest turn's context size, and those
+   * answer different questions; ContextWindowPanel already renders a missing value as "—". */
+  getSessionStats() {
+    const messages = this.engine.messages;
+    const usage = this.engine.usage;
+    let userMessages = 0;
+    let assistantMessages = 0;
+    let toolCalls = 0;
+    let toolResults = 0;
+    for (const msg of messages) {
+      if (msg.role === "user") userMessages++;
+      else if (msg.role === "assistant") {
+        assistantMessages++;
+        toolCalls += msg.toolCalls?.length ?? 0;
+      } else if (msg.role === "tool") toolResults++;
+    }
+    return {
+      sessionFile: undefined,
+      sessionId: this.sessionId,
+      userMessages,
+      assistantMessages,
+      toolCalls,
+      toolResults,
+      totalMessages: messages.length,
+      tokens: { ...usage, total: usage.input + usage.output + usage.cacheRead + usage.cacheWrite },
+      cost: 0,
+    };
   }
 }
 
@@ -554,17 +701,166 @@ export async function createOwnedEngineSession(
     ? (await capture({ roots: [{ path: cwd, writable: true }], workspace: cwd })).render()
     : undefined;
 
-  return new OwnedEngineSession(cwd, {
+  const session = new OwnedEngineSession(cwd, {
     sessionId: record?.id,
     initialMessages: record?.messages,
     createdAt: record?.createdAt,
+    parentId: record?.parentId,
+    branchPointIndex: record?.branchPointIndex,
     title: record?.title,
     knownWorld,
     unattended: options.unattended,
     taskRules: options.taskRules,
   });
+  // Safe unconditionally — Engine.resume() no-ops when there's no dangling tool call to
+  // pick back up (the common case: a brand-new session, or one that ended cleanly).
+  session.resumePending();
+  return session;
 }
 
 export function ownedEngineEnabled(): boolean {
   return process.env.METAHARN_CHAT_ENGINE === "owned";
+}
+
+/** Branches an ARBITRARY session by id — not necessarily the one currently loaded in the active
+ * window — by reading its persisted record straight off disk. OwnedEngineSession.branchFrom()
+ * is still what a live, currently-open session should use (its in-memory engine.messages can be
+ * ahead of what was last persisted); this is for branching from an ancestor further back in the
+ * tree that isn't the active session, e.g. picking an older node in the tree view. Mirrors
+ * apps/server/src/session.ts's identical function. */
+export function branchOwnedSessionAt(sessionId: string, messageIndex: number): string | null {
+  const path = findOwnedSessionPath(sessionId);
+  const record = path ? loadOwnedSessionRecord(path) : null;
+  if (!record) return null;
+  if (!record.messages.some((m) => m.role === "user")) return null;
+  if (messageIndex < 0 || messageIndex >= record.messages.length) return null;
+  const newId = randomUUID();
+  const newRecord: OwnedSessionRecord = {
+    id: newId,
+    cwd: record.cwd,
+    title: record.title,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    messages: structuredClone(record.messages.slice(0, messageIndex + 1)),
+    parentId: sessionId,
+    branchPointIndex: messageIndex,
+  };
+  const newPath = sessionFilePath(newId);
+  writeFileSync(newPath, JSON.stringify(newRecord));
+  return newPath;
+}
+
+/** Same shape as apps/server/src/session.ts's SessionTreeNodeDTO, which itself matches Pi's own
+ * sessions.ts's SessionTreeNodeDTO — one flat DTO shape lets SessionTreeView.tsx render a Pi
+ * session's tree or an owned-engine session's tree with zero component changes. */
+export interface OwnedSessionTreeNodeDTO {
+  id: string;
+  parentId: string | null;
+  type: string;
+  timestamp: string;
+  label?: string;
+  preview: string;
+  children: OwnedSessionTreeNodeDTO[];
+}
+
+function previewForMessage(msg: ChatMessage): string {
+  const text = typeof msg.content === "string" ? msg.content : "";
+  return `${msg.role}: ${text.slice(0, 80)}`;
+}
+
+/** Reconstructs the full branch tree that `sessionId` belongs to. See apps/server/src/session.ts's
+ * identical getSessionTree() for the full rationale — this is a line-for-line port, reading from
+ * this backend's own ownedSessionsDir() instead. */
+export function getOwnedSessionTree(sessionId: string): OwnedSessionTreeNodeDTO[] {
+  const all = listOwnedSessions();
+  const byId = new Map(all.map((s) => [s.id, s]));
+  if (!byId.has(sessionId)) return [];
+
+  let rootId = sessionId;
+  const climbed = new Set<string>();
+  while (true) {
+    const rec = byId.get(rootId);
+    if (!rec?.parentId || climbed.has(rootId) || !byId.has(rec.parentId)) break;
+    climbed.add(rootId);
+    rootId = rec.parentId;
+  }
+
+  const childrenByParent = new Map<string, OwnedSessionListItem[]>();
+  for (const s of all) {
+    if (!s.parentId) continue;
+    const bucket = childrenByParent.get(s.parentId);
+    if (bucket) bucket.push(s);
+    else childrenByParent.set(s.parentId, [s]);
+  }
+
+  // The index a session's OWN new content starts at — 0 for a root, branchPointIndex+1 for a
+  // branch. NOT the same as "the index to start walking from when grafting a grandchild": a
+  // grandchild can branch from an index that's still part of ITS PARENT's inherited (copied)
+  // prefix, not the parent's own unique range — e.g. branch B off A at index 2, then branch C
+  // off B at index 3 (B's own only unique index), then branch D off C at index 3 too (still
+  // shared with B, since C's own unique range only starts at 4). D's true parent node is B:3,
+  // not C:3 — C:3 was never built as a node because C's own loop only ever built C:4 onward.
+  // resolveNodeId() below walks the parent chain until it finds whichever session actually
+  // OWNS a given index, instead of assuming the direct parent always does.
+  const fromIndexCache = new Map<string, number>();
+  function ownFromIndex(sid: string): number {
+    const cached = fromIndexCache.get(sid);
+    if (cached !== undefined) return cached;
+    const path = findOwnedSessionPath(sid);
+    const record = path ? loadOwnedSessionRecord(path) : null;
+    const value = record?.branchPointIndex !== undefined ? record.branchPointIndex + 1 : 0;
+    fromIndexCache.set(sid, value);
+    return value;
+  }
+
+  function resolveNodeId(sid: string, index: number, guard = new Set<string>()): string {
+    if (guard.has(sid)) return `${sid}:${index}`; // circular parentId — bail rather than loop
+    if (index >= ownFromIndex(sid)) return `${sid}:${index}`;
+    const parentId = byId.get(sid)?.parentId;
+    if (!parentId) return `${sid}:${index}`;
+    guard.add(sid);
+    return resolveNodeId(parentId, index, guard);
+  }
+
+  const flat = new Map<string, OwnedSessionTreeNodeDTO>();
+  const visiting = new Set<string>();
+
+  function walk(sid: string): void {
+    if (visiting.has(sid)) return; // guards a corrupted/circular parentId chain
+    visiting.add(sid);
+    const path = findOwnedSessionPath(sid);
+    const record = path ? loadOwnedSessionRecord(path) : null;
+    if (record) {
+      const fromIndex = ownFromIndex(sid);
+      let prevNodeId = fromIndex > 0 ? resolveNodeId(sid, fromIndex - 1) : null;
+      for (let i = fromIndex; i < record.messages.length; i++) {
+        const nodeId = `${sid}:${i}`;
+        flat.set(nodeId, {
+          id: nodeId,
+          parentId: prevNodeId,
+          type: record.messages[i].role,
+          timestamp: record.updatedAt,
+          preview: previewForMessage(record.messages[i]),
+          children: [],
+        });
+        prevNodeId = nodeId;
+      }
+      for (const child of childrenByParent.get(sid) ?? []) walk(child.id);
+    }
+    visiting.delete(sid);
+  }
+
+  walk(rootId);
+
+  const roots: OwnedSessionTreeNodeDTO[] = [];
+  for (const node of flat.values()) {
+    if (node.parentId === null) {
+      roots.push(node);
+      continue;
+    }
+    const parent = flat.get(node.parentId);
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  return roots;
 }

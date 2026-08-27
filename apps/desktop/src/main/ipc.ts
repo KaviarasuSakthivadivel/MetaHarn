@@ -8,12 +8,28 @@ import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { ApprovalOutcome } from "@metaharn/engine/src/types.js";
 import { createMetaHarnSession, getModelConfig, type MetaHarnSession } from "./agent.js";
 import {
+  branchOwnedSessionAt,
   createOwnedEngineSession,
+  getOwnedSessionTree,
   isOwnedSessionPath,
   ownedEngineEnabled,
   ownedMessagesToHistory,
   type OwnedEngineSession,
 } from "./ownedEngine.js";
+import { deleteProvider, getAutoApproveSetting, getDefaultModel, listProviders, setAutoApproveSetting, setDefaultModel, setProvider } from "./ownedProviders.js";
+import { addMemory, deleteMemory, listMemories } from "./ownedMemoryApi.js";
+import { deleteMcpServer, listMcpServers, putMcpServer, testMcpServer, type McpServerInput, type McpTestCandidate } from "./ownedMcpApi.js";
+import { isWorkspaceTrusted, setWorkspaceTrust } from "./ownedWorkspaceTrust.js";
+import { listPendingInbox, resolveInboxItem } from "./ownedInbox.js";
+import {
+  createAutomationTask,
+  deleteAutomationTask,
+  listAutomationTasks,
+  runAutomationTaskNow,
+  updateAutomationTask,
+} from "./automation.js";
+import type { Scope } from "@metaharn/engine/src/memory/types.js";
+import type { Schedule } from "@metaharn/engine/src/automation/models.js";
 import { closePty, setPendingSeedPrompt } from "./pty-ipc.js";
 import { generateHandoffSummary } from "./agents/handoff.js";
 import { getTerminalSessionStats } from "./terminal-stats.js";
@@ -295,6 +311,53 @@ export function registerIpcHandlers() {
 
   ipcMain.handle("metaharn:getAppInfo", () => ({ version: app.getVersion(), ...getModelConfig() }));
 
+  // -- Owned-engine Settings (Models/Memory/MCP/Automations) --------------------------------
+  // Parity with apps/server's REST routes (see apps/server/src/index.ts) — same underlying
+  // ownedProviders.ts/ownedMemoryApi.ts/ownedMcpApi.ts modules a session already reads, just
+  // reached over IPC instead of HTTP. Editing here affects the OWNED engine only; Pi's model
+  // config above stays read-only (see SettingsPage.tsx's "Model" section).
+
+  ipcMain.handle("metaharn:owned:listProviders", () => listProviders());
+  ipcMain.handle("metaharn:owned:setProvider", (_event, name: string, input: { apiKey?: string; baseUrl?: string }) => setProvider(name, input));
+  ipcMain.handle("metaharn:owned:deleteProviderKey", (_event, name: string) => deleteProvider(name));
+  ipcMain.handle("metaharn:owned:getSettings", () => ({ defaultModel: getDefaultModel(), autoApprove: getAutoApproveSetting() ?? false }));
+  ipcMain.handle("metaharn:owned:setDefaultModel", (_event, provider: string, modelId: string) => setDefaultModel(provider, modelId));
+  ipcMain.handle("metaharn:owned:setAutoApprove", (_event, enabled: boolean) => setAutoApproveSetting(enabled));
+
+  ipcMain.handle("metaharn:owned:listMemories", (_event, filter?: { scope?: Scope; workspace?: string }) => listMemories(filter ?? {}));
+  ipcMain.handle(
+    "metaharn:owned:addMemory",
+    (_event, content: string, opts?: { scope?: Scope; workspace?: string; summary?: string }) => addMemory(content, opts ?? {}),
+  );
+  ipcMain.handle("metaharn:owned:deleteMemory", (_event, id: number) => deleteMemory(id));
+
+  ipcMain.handle("metaharn:owned:listMcpServers", () => listMcpServers());
+  ipcMain.handle("metaharn:owned:putMcpServer", (_event, name: string, input: McpServerInput) => putMcpServer(name, input));
+  ipcMain.handle("metaharn:owned:deleteMcpServer", (_event, name: string) => deleteMcpServer(name));
+  ipcMain.handle("metaharn:owned:testMcpServer", (_event, candidate: McpTestCandidate) => testMcpServer(candidate));
+  ipcMain.handle("metaharn:owned:isWorkspaceTrusted", (_event, workspace: string) => isWorkspaceTrusted(workspace));
+  ipcMain.handle("metaharn:owned:setWorkspaceTrust", (_event, workspace: string, trusted: boolean) => setWorkspaceTrust(workspace, trusted));
+
+  ipcMain.handle("metaharn:owned:listPendingInbox", () => listPendingInbox());
+  ipcMain.handle("metaharn:owned:resolveInboxItem", (_event, itemId: string, outcome: ApprovalOutcome) => resolveInboxItem(itemId, outcome));
+
+  ipcMain.handle("metaharn:owned:listAutomations", () => listAutomationTasks());
+  ipcMain.handle(
+    "metaharn:owned:createAutomation",
+    (_event, input: { title: string; instructions: string; workspace: string; schedule: Partial<Schedule> & Pick<Schedule, "kind"> }) =>
+      createAutomationTask(input),
+  );
+  ipcMain.handle(
+    "metaharn:owned:updateAutomation",
+    (
+      _event,
+      id: string,
+      patch: { title?: string; instructions?: string; enabled?: boolean; schedule?: Partial<Schedule> & Pick<Schedule, "kind"> },
+    ) => updateAutomationTask(id, patch),
+  );
+  ipcMain.handle("metaharn:owned:deleteAutomation", (_event, id: string) => deleteAutomationTask(id));
+  ipcMain.handle("metaharn:owned:runAutomationNow", (_event, id: string) => runAutomationTaskNow(id));
+
   ipcMain.handle("metaharn:deleteSession", (_event, sessionPath: string) => deleteSession(sessionPath));
 
   ipcMain.handle("metaharn:createTerminalSession", async (_event, cwd: string, agentKind: AgentKind, seedPrompt?: string) => {
@@ -531,10 +594,13 @@ export function registerIpcHandlers() {
 
   ipcMain.handle("metaharn:getSessionTree", (event: IpcMainInvokeEvent) => {
     const entry = sessionsByWindow.get(event.sender.id);
-    // No session-tree concept for the owned engine yet (no persistence at all in this pass —
-    // see ownedEngine.ts) — an empty tree, not an error, matches how the renderer already
-    // treats "nothing to show here" for other panels.
-    if (!entry || entry.kind !== "pi") return [];
+    if (!entry) return [];
+    // The owned engine has no built-in tree structure the way Pi's SessionManager does — each
+    // branch is its own flat, independent session file linked only by parentId/branchPointIndex
+    // (see OwnedEngineSession.branchFrom()). getOwnedSessionTree() reconstructs the tree from
+    // that link graph, one node per ChatMessage, in the same SessionTreeNodeDTO shape Pi's own
+    // treeToDTO() produces below — so SessionTreeView.tsx renders either backend unmodified.
+    if (entry.kind === "owned") return getOwnedSessionTree(entry.session.sessionId);
     // Pure read of the manager's tree structure — safe to call directly,
     // unlike branching (see below), which goes through AgentSession instead.
     return treeToDTO(entry.sessionManager.getTree());
@@ -543,7 +609,23 @@ export function registerIpcHandlers() {
   ipcMain.handle("metaharn:branchSession", async (event: IpcMainInvokeEvent, entryId: string) => {
     const sender = event.sender;
     const entry = sessionsByWindow.get(sender.id);
-    if (!entry || entry.kind !== "pi") return;
+    if (!entry) return null;
+    if (entry.kind === "owned") {
+      // entryId is `${sessionId}:${messageIndex}` — see getOwnedSessionTree()'s node id
+      // convention. Unlike Pi's in-place navigateTree(), branching here always creates a NEW
+      // session file (a flat array has nowhere else to hold a second branch), so the caller
+      // gets a path back and switches to it the same way forkChatSession's result is consumed.
+      const sep = entryId.lastIndexOf(":");
+      if (sep === -1) return null;
+      const targetId = entryId.slice(0, sep);
+      const messageIndex = Number(entryId.slice(sep + 1));
+      if (!Number.isInteger(messageIndex)) return null;
+      const newPath =
+        targetId === entry.session.sessionId
+          ? entry.session.branchFrom(messageIndex)
+          : branchOwnedSessionAt(targetId, messageIndex);
+      return newPath ? { path: newPath } : null;
+    }
     try {
       // Goes through AgentSession.navigateTree() rather than calling
       // sessionManager.branch() directly — the manager's leaf pointer isn't
@@ -556,17 +638,28 @@ export function registerIpcHandlers() {
         sessionId: entry.session.sessionId,
         history: messagesToHistory(entry.session.messages),
       });
+      return null;
     } catch (err) {
       pushEvent(sender, { type: "error", message: (err as Error).message });
+      return null;
     }
+  });
+
+  // Owned-engine only — the inline "branch from here" button on an individual chat message.
+  // Always targets the CURRENTLY active session, so unlike branchSession (which can target any
+  // session in the tree, addressed by id) this only needs a bare message index — the renderer
+  // doesn't need to track its own session id just to build a string it'd immediately re-parse.
+  ipcMain.handle("metaharn:branchCurrentSession", (event: IpcMainInvokeEvent, messageIndex: number) => {
+    const entry = sessionsByWindow.get(event.sender.id);
+    if (!entry || entry.kind !== "owned") return null;
+    const newPath = entry.session.branchFrom(messageIndex);
+    return newPath ? { path: newPath } : null;
   });
 
   ipcMain.handle("metaharn:getSessionStats", (event: IpcMainInvokeEvent) => {
     const entry = sessionsByWindow.get(event.sender.id);
-    // No SessionStats equivalent for the owned engine yet (no token-usage accounting wired
-    // up in this pass) — ContextWindowPanel already renders `null` as "—", the same
-    // treatment a session with no stats yet gets today.
-    if (!entry || entry.kind !== "pi") return null;
+    if (!entry) return null;
+    if (entry.kind === "owned") return entry.session.getSessionStats();
     // getSessionStats() aggregates over ALL entries including compacted-away
     // history (token/cost totals reflect what was actually billed), and its
     // contextUsage field is specifically the *latest turn's* context size —
@@ -576,7 +669,11 @@ export function registerIpcHandlers() {
 
   ipcMain.handle("metaharn:forkChatSession", (event: IpcMainInvokeEvent) => {
     const entry = sessionsByWindow.get(event.sender.id);
-    if (!entry || entry.kind !== "pi") return null;
+    if (!entry) return null;
+    if (entry.kind === "owned") {
+      const newPath = entry.session.fork();
+      return newPath ? { path: newPath } : null;
+    }
     // Pi's real fork() (new session file + runtime swap) lives on
     // AgentSessionRuntime, an object MetaHarn never adopted — createAgentSession
     // is used directly instead (see agent.ts). SessionManager's own

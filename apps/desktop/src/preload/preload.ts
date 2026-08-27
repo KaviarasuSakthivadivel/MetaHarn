@@ -3,12 +3,36 @@ import { contextBridge, ipcRenderer } from "electron";
 export interface HistoryMessage {
   role: "user" | "assistant" | "tool";
   text: string;
+  /** Owned-engine sessions only — this message's position in the underlying ChatMessage[],
+   * what "branch from here" needs (getSessionTree()'s node ids are `${sessionId}:${index}` in
+   * that same array). Undefined for a Pi session: Pi already has its own message-node tree via
+   * SessionTreeView.tsx, addressed a different way (entry ids, not array indices). */
+  index?: number;
 }
 
 /** What a client should do about one pending approval — mirrors @metaharn/engine's
  * ApprovalOutcome (the owned-engine backend's PermissionEngine understands all of these;
  * "once" is the only one a bare Approve/Deny UI needs to send). */
 export type ApprovalOutcome = "once" | "always_tool" | "always_command" | "always_domain" | "readonly_session" | "deny";
+
+/** One durable HITL Inbox row — mirrors @metaharn/engine's hitl/inbox.ts's InboxItem. Only the
+ * "approval" kind has a live consumer today (the interactive PermissionPrompt/Inbox view);
+ * "question" items (ask_user) can appear here too but nothing resolves them yet on this
+ * surface. */
+export interface OwnedInboxItem {
+  id: string;
+  kind: "approval" | "question";
+  sessionId: string;
+  toolCallId?: string;
+  toolName?: string;
+  arguments?: Record<string, unknown>;
+  title?: string;
+  body?: string;
+  resolved: boolean;
+  resolution?: string;
+  createdAt: number;
+  resolvedAt?: number;
+}
 
 export type MetaHarnEvent =
   | { type: "ready"; sessionId: string; history: HistoryMessage[] }
@@ -17,10 +41,15 @@ export type MetaHarnEvent =
   | { type: "tool_start"; toolCallId: string; toolName: string; args: unknown }
   | { type: "tool_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
   // Owned-engine backend only (METAHARN_CHAT_ENGINE=owned) — Pi never emits this; its own
-  // approval flow, if any, is internal to the SDK. See ownedEngine.ts.
+  // approval flow, if any, is internal to the SDK. See ownedEngine.ts. Token-usage stats for
+  // an owned-engine session travel through the existing getSessionStats()/SessionStats path
+  // instead of a live event — see ownedEngine.ts's getSessionStats() doc comment.
   | { type: "permission_required"; toolCallId: string; toolName: string; args: unknown; reason: string }
   | { type: "agent_end" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  // Owned-engine backend only, same reasoning as permission_required above — a user or
+  // assistant message just landed at `index`, live, for an inline "branch from here" action.
+  | { type: "message_index"; role: "user" | "assistant"; index: number };
 
 /** The real CLI coding agent a terminal session runs — see
  * apps/desktop/src/main/agents/ for each one's adapter. */
@@ -59,6 +88,10 @@ export interface SessionListItem {
   firstMessage: string;
   /** Only meaningful for type "terminal". */
   agentKind?: AgentKind;
+  /** Only set for an owned-engine session created via fork() — the session it was duplicated
+   * from. Not yet surfaced in the sidebar UI (see 08-known-limitations.md); carried through
+   * here so the data isn't silently dropped once that UI work happens. */
+  parentId?: string;
 }
 
 /** SessionListItem, plus when it was archived — metaharn:listArchivedSessions'
@@ -110,6 +143,94 @@ export interface AppInfo {
   version: string;
   provider: string;
   modelId: string;
+}
+
+// -- Owned engine Settings (Models/Memory/MCP/Automations) — see ownedEngine.ts's docstring
+// for why this is a second, separate backend from Pi (whose config is the read-only AppInfo
+// above). Shapes mirror apps/web/src/client.ts's — same underlying @metaharn/engine types.
+
+export interface OwnedProviderStatus {
+  name: string;
+  displayName: string;
+  noKeyNeeded: boolean;
+  configured: boolean;
+  baseUrl?: string;
+}
+
+export interface OwnedGeneralSettings {
+  defaultModel: { provider: string; modelId: string };
+  autoApprove: boolean;
+}
+
+export type OwnedMemoryScope = "global" | "workspace";
+
+export interface OwnedMemoryItem {
+  id: number;
+  scope: OwnedMemoryScope;
+  content: string;
+  summary?: string;
+  workspace?: string;
+  createdAt?: string;
+}
+
+export interface OwnedMcpServer {
+  name: string;
+  transport: "stdio" | "http";
+  command?: string;
+  args: string[];
+  env: Record<string, string>;
+  url?: string;
+  headers: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface OwnedMcpTestResult {
+  ok: boolean;
+  toolCount?: number;
+  tools?: string[];
+  error?: string;
+}
+
+export interface OwnedMcpTestCandidate {
+  transport: "stdio" | "http";
+  name?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}
+
+export interface OwnedAutomationSchedule {
+  kind: "cron" | "once";
+  cron: string | null;
+  fireAt: string | null;
+  timezone: string;
+}
+
+export interface OwnedTaskRun {
+  runId: string;
+  startedAt: number;
+  finishedAt: number | null;
+  status: "running" | "ok" | "error" | "skipped";
+  resultText: string | null;
+  error: string | null;
+  trigger: string;
+}
+
+export interface OwnedAutomation {
+  id: string;
+  title: string;
+  instructions: string;
+  schedule: string;
+  scheduleRaw: OwnedAutomationSchedule;
+  workspace: string;
+  enabled: boolean;
+  nextRun: number | null;
+  lastRun: number | null;
+  lastStatus: string | null;
+  runCount: number;
+  recentRuns: OwnedTaskRun[];
 }
 
 export interface SessionTreeNode {
@@ -164,6 +285,43 @@ const metaharnBridge = {
   registerProject: (cwd: string): Promise<ProjectListItem> => ipcRenderer.invoke("metaharn:registerProject", cwd),
   listProjects: (): Promise<ProjectListItem[]> => ipcRenderer.invoke("metaharn:listProjects"),
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke("metaharn:getAppInfo"),
+
+  // -- Owned engine Settings — see the OwnedProviderStatus etc. types above.
+  listOwnedProviders: (): Promise<OwnedProviderStatus[]> => ipcRenderer.invoke("metaharn:owned:listProviders"),
+  setOwnedProvider: (name: string, input: { apiKey?: string; baseUrl?: string }): Promise<void> =>
+    ipcRenderer.invoke("metaharn:owned:setProvider", name, input),
+  deleteOwnedProviderKey: (name: string): Promise<void> => ipcRenderer.invoke("metaharn:owned:deleteProviderKey", name),
+  getOwnedSettings: (): Promise<OwnedGeneralSettings> => ipcRenderer.invoke("metaharn:owned:getSettings"),
+  setOwnedDefaultModel: (provider: string, modelId: string): Promise<void> =>
+    ipcRenderer.invoke("metaharn:owned:setDefaultModel", provider, modelId),
+  setOwnedAutoApprove: (enabled: boolean): Promise<void> => ipcRenderer.invoke("metaharn:owned:setAutoApprove", enabled),
+  listOwnedMemories: (filter?: { scope?: OwnedMemoryScope; workspace?: string }): Promise<OwnedMemoryItem[]> =>
+    ipcRenderer.invoke("metaharn:owned:listMemories", filter),
+  addOwnedMemory: (content: string, opts?: { scope?: OwnedMemoryScope; workspace?: string; summary?: string }): Promise<OwnedMemoryItem> =>
+    ipcRenderer.invoke("metaharn:owned:addMemory", content, opts),
+  deleteOwnedMemory: (id: number): Promise<void> => ipcRenderer.invoke("metaharn:owned:deleteMemory", id),
+  listOwnedMcpServers: (): Promise<OwnedMcpServer[]> => ipcRenderer.invoke("metaharn:owned:listMcpServers"),
+  putOwnedMcpServer: (name: string, input: Partial<OwnedMcpServer>): Promise<void> =>
+    ipcRenderer.invoke("metaharn:owned:putMcpServer", name, input),
+  deleteOwnedMcpServer: (name: string): Promise<void> => ipcRenderer.invoke("metaharn:owned:deleteMcpServer", name),
+  testOwnedMcpServer: (candidate: OwnedMcpTestCandidate): Promise<OwnedMcpTestResult> => ipcRenderer.invoke("metaharn:owned:testMcpServer", candidate),
+  isOwnedWorkspaceTrusted: (workspace: string): Promise<boolean> => ipcRenderer.invoke("metaharn:owned:isWorkspaceTrusted", workspace),
+  setOwnedWorkspaceTrust: (workspace: string, trusted: boolean): Promise<void> =>
+    ipcRenderer.invoke("metaharn:owned:setWorkspaceTrust", workspace, trusted),
+  // Every still-pending Inbox item across EVERY owned-engine session, not just the one open in
+  // this window — resolveOwnedInboxItem() works by item id alone, so it can answer one even for
+  // a session that isn't currently loaded (the durable point of the Inbox in the first place).
+  listOwnedPendingInbox: (): Promise<OwnedInboxItem[]> => ipcRenderer.invoke("metaharn:owned:listPendingInbox"),
+  resolveOwnedInboxItem: (itemId: string, outcome: ApprovalOutcome): Promise<boolean> =>
+    ipcRenderer.invoke("metaharn:owned:resolveInboxItem", itemId, outcome),
+  listOwnedAutomations: (): Promise<OwnedAutomation[]> => ipcRenderer.invoke("metaharn:owned:listAutomations"),
+  createOwnedAutomation: (input: { title: string; instructions: string; workspace: string; schedule: OwnedAutomationSchedule }): Promise<OwnedAutomation> =>
+    ipcRenderer.invoke("metaharn:owned:createAutomation", input),
+  setOwnedAutomationEnabled: (id: string, enabled: boolean): Promise<OwnedAutomation> =>
+    ipcRenderer.invoke("metaharn:owned:updateAutomation", id, { enabled }),
+  deleteOwnedAutomation: (id: string): Promise<void> => ipcRenderer.invoke("metaharn:owned:deleteAutomation", id),
+  runOwnedAutomationNow: (id: string): Promise<OwnedTaskRun> => ipcRenderer.invoke("metaharn:owned:runAutomationNow", id),
+
   deleteSession: (sessionPath: string): Promise<void> => ipcRenderer.invoke("metaharn:deleteSession", sessionPath),
   createTerminalSession: (cwd: string, agentKind: AgentKind, seedPrompt?: string): Promise<{ id: string }> =>
     ipcRenderer.invoke("metaharn:createTerminalSession", cwd, agentKind, seedPrompt),
@@ -238,7 +396,16 @@ const metaharnBridge = {
     ipcRenderer.invoke("metaharn:resolvePermission", toolCallId, outcome),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke("metaharn:pickDirectory"),
   getSessionTree: (): Promise<SessionTreeNode[]> => ipcRenderer.invoke("metaharn:getSessionTree"),
-  branchSession: (entryId: string): Promise<void> => ipcRenderer.invoke("metaharn:branchSession", entryId),
+  // Returns { path } for an owned-engine branch (a NEW session file the caller must switch to,
+  // same shape as forkChatSession's result) — null/void for Pi, which branches in place and
+  // pushes its own "ready" event instead (see ipc.ts's branchSession handler).
+  branchSession: (entryId: string): Promise<{ path: string } | null | void> =>
+    ipcRenderer.invoke("metaharn:branchSession", entryId),
+  // Owned-engine only — inline "branch from here" on one chat message, always against the
+  // currently active session. Returns null for a Pi session (nothing to do — the button isn't
+  // shown there in the first place, since Pi messages never carry an `index`).
+  branchCurrentSession: (messageIndex: number): Promise<{ path: string } | null> =>
+    ipcRenderer.invoke("metaharn:branchCurrentSession", messageIndex),
   getSessionStats: (): Promise<SessionStats | null> => ipcRenderer.invoke("metaharn:getSessionStats"),
   forkChatSession: (): Promise<{ path: string } | null> => ipcRenderer.invoke("metaharn:forkChatSession"),
   onEvent: (callback: (event: MetaHarnEvent) => void) => {
