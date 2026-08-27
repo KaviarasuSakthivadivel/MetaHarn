@@ -14,9 +14,12 @@
 // https://v2.tauri.app/develop/sidecar/ — typically via `pkg`/`nexe` to produce a real
 // executable, since Tauri sidecars are plain binaries, not "run this with node"). That's a
 // distinct packaging task from getting `tauri dev` working, and needs its own pass.
+// The dialog plugin is the one bit of native-command surface this webview actually calls
+// (folderPicker.ts's pickFolder()) — everything else still goes through @metaharn/server.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .run(tauri::generate_context!())
         .expect("error while running the MetaHarn Tauri application");
 }

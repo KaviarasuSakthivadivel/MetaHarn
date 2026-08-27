@@ -1,0 +1,106 @@
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root {
+  --ink: #15141b;
+  --ink-soft: #201f2b;
+  --ink-softer: #2b2a38;
+  --paper: #ffffff;
+  --paper-dim: #f6f4ef;
+  --paper-dim-2: #efece3;
+  --line: #e7e3da;
+  --line-strong: #d8d3c6;
+  --text: #17161d;
+  --text-muted: #6f6c78;
+  --sidebar-fg: #f4f2ea;
+  --sidebar-fg-dim: #9c99a8;
+  --accent: #ff5a1f;
+  --accent-strong: #e34c13;
+  --accent-soft: #ffe6d8;
+  --accent-ink: #2c1200;
+  --good: #1f9d6c;
+  --good-soft: #e2f6ec;
+  --bad: #e5484d;
+  --bad-soft: #fde4e4;
+  --warn: #d97a0a;
+  --warn-soft: #fbead2;
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 20px;
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  --shadow-sm: 0 1px 2px rgba(21, 20, 27, 0.06);
+  --shadow-md: 0 8px 24px rgba(21, 20, 27, 0.1);
+  --shadow-lg: 0 24px 64px rgba(21, 20, 27, 0.22);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  margin: 0;
+  text-wrap: balance;
+}
+
+button {
+  font-family: var(--font-body);
+}
+
+input,
+textarea {
+  font-family: var(--font-body);
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.sidebar ::-webkit-scrollbar-thumb {
+  background: var(--ink-softer);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

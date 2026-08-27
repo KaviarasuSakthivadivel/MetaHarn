@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for MetaHarn's main window — deliberately minimal: this webview only ever talks to @metaharn/server over plain fetch/WebSocket, no Tauri-native commands are invoked from the frontend in this pass.",
+  "description": "Capabilities for MetaHarn's main window — this webview talks to @metaharn/server over plain fetch/WebSocket for everything except the native folder picker (dialog plugin), which is the one Tauri command the frontend calls directly (see src/folderPicker.ts).",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:default"]
 }
