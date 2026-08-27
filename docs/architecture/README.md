@@ -4,6 +4,10 @@ This directory is the technical map of MetaHarn: how the pieces fit together, wh
 
 ## Start here
 
+For the full system at a glance — every process, both products, and exactly what protocol
+connects each pair — see [`00-system-map.md`](00-system-map.md) first. The rest of this page
+introduces the core meta-harness concept that `01-overview.md` onward covers in depth.
+
 MetaHarn is a **meta-harness**: it does not implement its own agent loop, tool-calling, or model routing. It embeds [Pi](https://pi.dev) (`@earendil-works/pi-coding-agent`) as the execution engine and layers two things on top of it:
 
 1. **Institutional-memory context grounding** — the actual differentiator. Pi gets told *who owns what* (CODEOWNERS) and *what this codebase actually is* (semantic search over the real repo, plus a generated summary doc), instead of relying on the model's generic priors.
@@ -15,6 +19,7 @@ If you've read agentic-coding-tool architecture docs before (Claude Code, Cursor
 
 | Doc | Covers |
 |---|---|
+| [`00-system-map.md`](00-system-map.md) | **Start here for the full picture.** Every process across both products (`apps/desktop` and `apps/server`+`apps/web`), a complete communication/protocol map between them, and how their state trees stay separate |
 | [`01-overview.md`](01-overview.md) | What MetaHarn is, the meta-harness concept, goals and explicit non-goals |
 | [`02-process-model.md`](02-process-model.md) | Electron's multi-process architecture: main, preload, renderer, and terminal pty child processes |
 | [`03-agent-runtime.md`](03-agent-runtime.md) | Pi SDK integration: session lifecycle, custom tools, event streaming, session tree/branching |
@@ -23,6 +28,7 @@ If you've read agentic-coding-tool architecture docs before (Claude Code, Cursor
 | [`06-ipc-contract.md`](06-ipc-contract.md) | Every IPC channel, the three preload bridges, and the security model behind them |
 | [`07-frontend.md`](07-frontend.md) | Renderer navigation model, component map, theming |
 | [`08-known-limitations.md`](08-known-limitations.md) | Open architectural gaps and tech debt — read this before extending the system |
+| [`09-owned-engine.md`](09-owned-engine.md) | `@metaharn/engine` — the second, MetaHarn-owned chat backend (providers, tools, permissions, memory, MCP, automation) and its two surfaces: Electron (`apps/desktop`) and the OpenWorker-shaped local server + web/Tauri UI (`apps/server`, `apps/web`) |
 
 ## Keeping this current
 

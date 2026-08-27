@@ -32,9 +32,14 @@ Swapping a terminal session's agent (`AgentSwapMenu.tsx`) tries to carry context
 
 ## Configuration / UX
 
-### Model provider and model ID aren't configurable in-app
+### Pi's model provider and model ID aren't configurable in-app
 
-`METAHARN_MODEL_PROVIDER` / `METAHARN_MODEL_ID` are `.env`-only. The Settings page displays them read-only, with a note pointing at `.env` — actually changing them from the UI isn't wired up.
+`METAHARN_MODEL_PROVIDER` / `METAHARN_MODEL_ID` (Pi's own config) are `.env`-only. The
+Settings page's "Model" section displays them read-only, with a note pointing at `.env` —
+actually changing them from the UI isn't wired up. This is Pi-specific: the separate "Owned
+Engine" section further down the same Settings page (see [`09-owned-engine.md`](09-owned-engine.md))
+DOES let you change the owned engine's default model and provider keys from the UI — the two
+backends' configs are independent and this gap applies only to the Pi one.
 
 ### Postgres-via-Docker as a dependency of a "native app"
 
@@ -63,6 +68,111 @@ Only `MakerZIP` for `darwin` is configured in `forge.config.ts`. The Vite-based 
 ### `ui.tsx`'s shared primitives aren't retrofitted everywhere
 
 `SPACE`/`TEXT`/`RADIUS` and `Section`/`Row`/`ValueRow`/`Eyebrow`/`SegmentedControl`/`MetaChip` (see [`07-frontend.md`](07-frontend.md)) were applied where a UI audit found concrete, verified drift (`SettingsPage.tsx`, `ContextWindowPanel.tsx`) and in new code built after they existed (`Sidebar.tsx`) — not swept across every other screen's inline styles. `ProjectOverview.tsx`, `ProjectsListPage.tsx`, `App.tsx`'s chat/terminal views, etc. still hand-write their own style objects; nothing stops new drift from accumulating there until (if) they're migrated too.
+
+## Owned engine / OpenWorker surface (see `09-owned-engine.md`)
+
+### The HITL Inbox is wired and discoverable; `buttons.ts` still isn't
+
+`hitl/inbox.ts` is now wired on both surfaces, including a cross-session Inbox page (bell icon
++ pending-count badge, both surfaces) — see [`09-owned-engine.md`](09-owned-engine.md) for the
+full writeup, including two real bugs (both caught before shipping, not after): persisting only
+on turn-completion meant a durable approval row could survive a restart while the conversation
+it belonged to didn't, since a suspended-on-approval turn never reaches its own completion-time
+persist — fixed by persisting eagerly the moment a `permission_required` event fires. `buttons.ts`
+(rich button-prompt encoding for a mirrored surface like Slack) is still unused — no such
+surface exists here, and nothing in this codebase is expected to need it until one does.
+
+### Provider parity is 10, not ~19
+
+`@metaharn/engine`'s `ProviderRouter` has real clients for `anthropic`, `openai`, `ollama`,
+`openrouter`, `together`, `fireworks`, `deepseek`, `groq`, `mistral`, and `xai` — every one
+but `anthropic` is `OpenAIProvider` pointed at that vendor's own documented OpenAI-compatible
+endpoint (`providers.ts`'s `PROVIDER_CATALOG`; no per-vendor SDK code). OpenWorker's own
+reference Settings > Models page lists ~19 (also Bedrock, Kimi, MiniMax, Qwen, Vertex,
+Volcengine, Z AI/GLM, and a few others), most of them behind auth flows genuinely different
+from an API key + base URL (Bedrock/Vertex are cloud-IAM-credentialed, not key-based). Settings
+> Models on both surfaces intentionally shows cards **only** for providers that actually
+work — no placeholder/fake cards for the rest — so closing the remaining gap means either a
+real non-OpenAI-compatible client implementation, or confirming a given vendor's endpoint
+really is OpenAI-compatible before adding it to the catalog (not assumed — the base URLs
+already in the catalog are each vendor's own published one, but none were live-tested against
+a real account in this pass; no keys were on hand for most of them).
+
+### Automation storage is separate per surface, on purpose
+
+Electron's `automation.db` (`app.getPath("userData")`) and `apps/server`'s `automations.db`
+(`~/.metaharn`) are two independent `TaskStore`s — a task created in one surface does not
+appear in, or run from, the other. Same reasoning as the Postgres-catalog gap below: no shared
+store between the two processes exists yet.
+
+### No packaged Tauri build
+
+`apps/web/src-tauri` only runs via `tauri dev` (its `beforeDevCommand` starts both
+`@metaharn/server` and the Vite dev server). A real `tauri build` has no dev server to point
+at — `@metaharn/server` would need to ship as an actual sidecar binary (Tauri's sidecar
+mechanism, typically via `pkg`/`nexe` to produce a real executable, since sidecars are plain
+binaries, not "run this with node"). Not attempted in this pass; see `src-tauri/src/lib.rs`'s
+module doc.
+
+### Electron's Connectors panel has no enable/disable toggle
+
+Noticed while giving the panel's Remove action an icon-hover treatment to match web (see
+[`09-owned-engine.md`](09-owned-engine.md)): every connector Electron saves is hardcoded
+`enabled: true` — there's no UI (or wiring) to disable one without deleting it outright. Web's
+Connectors page has this (a real toggle switch, wired to `putMcpServer`'s `enabled` field, which
+Electron's own `OwnedMcpServer` type already carries). Left as a disclosed gap rather than added
+silently, since it's new capability beyond what was asked for in that pass.
+
+### Web-only: dedicated provider pages and curated models
+
+Built for web specifically (see [`09-owned-engine.md`](09-owned-engine.md)) — matching a set of
+OpenWorker reference screenshots that were themselves web-style UI. Electron's Models/
+Connectors/Automations panels still show the older flat-list layout with a free-text model-id
+field, no curated per-provider catalog. Not attempted in this pass — a real port needs its own
+design pass for Electron's denser `ListRow`-based settings layout, not a straight copy of web's
+card grid.
+
+### No composer's model-picker (built, verified, then removed on request)
+
+A live in-chat model switcher existed briefly — a persisted "enabled models" list, a checkbox
+per model, and a chat-header dropdown calling `Engine.switchModel()` (itself still a real,
+working method in `packages/engine`, just with no caller from either app again now). Built and
+verified working end to end, then explicitly asked to be rolled back; reverted in full rather
+than left disabled-but-present, so there's no half-wired feature to trip over later. See
+[`09-owned-engine.md`](09-owned-engine.md) for exactly what came out.
+
+### Owned-engine message-level branching, including an inline entry point
+
+Closed across two passes — see [`09-owned-engine.md`](09-owned-engine.md) for the full
+writeups, including three real bugs found and fixed while building it: a branch silently
+losing its own lineage on resume, a tree-graft placement bug for a branch-of-a-branch, and (for
+the inline entry point) the discovery that the chat UI's rendered message list and the
+server's raw `ChatMessage[]` aren't in a stable 1:1 correspondence, fixed by threading real
+message indices through `@metaharn/engine`'s own event stream rather than guessing client-side.
+Both surfaces reconstruct and expose the actual tree a session belongs to
+(`getSessionTree()`/`getOwnedSessionTree()`), can branch from ANY message in it via the Tree
+panel (Electron reuses Pi's own `SessionTreeView.tsx` unmodified; web got a new
+`SessionTree.tsx`), and now also have a "⎇ branch from here" button directly on qualifying chat
+messages, live, without needing to open the tree at all. Electron's sidebar still doesn't
+render a "forked from"/"branched from" indicator for owned-engine sessions even though
+`parentId` is in `SessionListItem` (the web sidebar does show it) — unchanged from these
+passes, a sidebar-rendering gap rather than a branching one. Context/token-usage stats and
+workspace-trust gating on the MCP config are wired on both surfaces — see
+[`09-owned-engine.md`](09-owned-engine.md).
+
+### Web-only: Session panel (Progress checklist, multi-folder Access, collapsed step trace)
+
+Built for web specifically, matching another set of OpenWorker reference screenshots — see
+[`09-owned-engine.md`](09-owned-engine.md) for the full writeup, including a real
+permission-engine bug (`web_search` permanently stuck requesting approval despite declaring
+`requiresApproval: false`, because the egress-risk check only knew how to resolve a `url`
+argument) found and fixed while building it. Electron has none of this: no `SessionPanel`
+equivalent, no Progress checklist, no in-UI folder grant/revoke (Electron's owned-engine sessions
+are still single-workspace, permission-engine roots aside from the implicit workspace/scratch
+pair are only reachable by editing config), and no collapsed step trace (Electron's transcript
+still renders every tool call as its own top-level row). A real port needs its own layout pass —
+Electron has no existing right-hand-sidebar pattern to slot this into, unlike the provider-pages
+work which reused an existing settings-page shape.
 
 ## Install/build environment quirks (already worked around, documented for context)
 
