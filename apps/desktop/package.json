@@ -10,7 +10,7 @@
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
-    "postinstall": "node scripts/fix-node-pty-permissions.js"
+    "postinstall": "node scripts/fix-node-pty-permissions.js && node scripts/rebuild-native-modules.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.1",

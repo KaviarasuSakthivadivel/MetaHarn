@@ -53,16 +53,22 @@ const config: ForgeConfig = {
   },
   // node-pty already ships correct prebuilt native binaries for both
   // darwin-x64 and darwin-arm64 (node_modules/node-pty/prebuilds/), matching
-  // Electron's own ABI — no rebuild-from-source needed or wanted.
-  // `onlyModules: []` tells @electron/rebuild to rebuild nothing, since
-  // nothing here needs it. (An earlier version of this comment blamed a
-  // silent packaging failure on "sandbox restrictions" — that diagnosis was
-  // wrong. The real cause, found by actually reproducing and root-causing
-  // it: this dev machine's only installed Node (v26.5.0) was too new for
-  // several native addons in the DMG-maker's own dependency chain to build
-  // against, unrelated to node-pty or this rebuildConfig at all. See
-  // docs/RELEASING.md.)
-  rebuildConfig: { onlyModules: [] },
+  // Electron's own ABI — no rebuild-from-source needed or wanted. (An earlier
+  // version of this comment blamed a silent packaging failure on "sandbox
+  // restrictions" — that diagnosis was wrong. The real cause, found by
+  // actually reproducing and root-causing it: this dev machine's only
+  // installed Node (v26.5.0) was too new for several native addons in the
+  // DMG-maker's own dependency chain to build against, unrelated to node-pty
+  // or this rebuildConfig at all. See docs/RELEASING.md.)
+  //
+  // better-sqlite3 (@metaharn/engine's memory store) is the opposite case: its
+  // own install script fetches/builds a binary for the SYSTEM Node that ran
+  // `npm install`, not Electron's bundled Node/V8 — a real, reproduced ABI
+  // mismatch (`new Database(...)` throwing inside the actual Electron main
+  // process; the dev-loop fix is scripts/rebuild-native-modules.js's postinstall
+  // step, but a PACKAGED build's node_modules is assembled fresh by
+  // copyExternalDeps/electron-packager and needs its own rebuild pass here).
+  rebuildConfig: { onlyModules: ["better-sqlite3"] },
   makers: [new MakerZIP({}, ["darwin"]), new MakerDMG({}, ["darwin"])],
   publishers: [
     new PublisherGithub({
