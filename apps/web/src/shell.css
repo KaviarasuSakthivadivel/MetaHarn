@@ -522,6 +522,18 @@
   opacity: 0.75;
 }
 
+.btn-ghost.icon-only {
+  padding: 8px;
+  width: 32px;
+  height: 32px;
+  justify-content: center;
+}
+
+.btn-ghost.icon-only svg {
+  width: 15px;
+  height: 15px;
+}
+
 .btn-ghost:hover {
   background: var(--paper-dim);
   color: var(--text);

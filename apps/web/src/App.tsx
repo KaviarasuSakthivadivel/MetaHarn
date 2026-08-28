@@ -690,17 +690,17 @@ export default function App() {
                     {formatTokenCount(usage.input + usage.output + usage.cacheRead + usage.cacheWrite)} tok
                   </span>
                 )}
-                <button className="btn-ghost" onClick={forkCurrentSession} disabled={messages.length === 0} title="Duplicate this conversation into a new session">
-                  <IconFork /> Fork
+                <button className="btn-ghost icon-only" onClick={forkCurrentSession} disabled={messages.length === 0} title="Fork — duplicate this conversation into a new session">
+                  <IconFork />
                 </button>
-                <button className="btn-ghost" onClick={toggleTree} disabled={messages.length === 0} title="Rewind to an earlier point and branch from it">
-                  <IconBranch /> Tree
+                <button className="btn-ghost icon-only" onClick={toggleTree} disabled={messages.length === 0} title="Tree — rewind to an earlier point and branch from it">
+                  <IconBranch />
                 </button>
-                <button className={`btn-ghost${showSessionPanel ? " active" : ""}`} onClick={() => setShowSessionPanel((v) => !v)} title="Progress, folders, and sources for this session">
-                  <IconPanelRight /> Session
+                <button className={`btn-ghost icon-only${showSessionPanel ? " active" : ""}`} onClick={() => setShowSessionPanel((v) => !v)} title="Session — progress, folders, and sources for this session">
+                  <IconPanelRight />
                 </button>
-                <button className="btn-ghost" onClick={startNewSession}>
-                  <IconPlus /> New session
+                <button className="btn-ghost icon-only" onClick={startNewSession} title="New session">
+                  <IconPlus />
                 </button>
               </div>
             </div>
