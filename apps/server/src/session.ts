@@ -21,7 +21,7 @@
  * @metaharn/db — sessions created here don't appear in Electron's sidebar; separate storage).
  */
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "@metaharn/engine/src/engine.js";
 import { ToolRegistry } from "@metaharn/engine/src/tools/registry.js";
@@ -511,6 +511,14 @@ export class ServerSession {
     }
   }
 
+  /** User-driven rename (sidebar), distinct from persist()'s own auto-derived title — setting
+   * this to anything other than the literal "New chat" also stops that auto-derivation from
+   * overwriting it once the first real message lands. */
+  rename(title: string): void {
+    this.title = title;
+    this.persist();
+  }
+
   private forward(event: EngineEvent): void {
     switch (event.type) {
       case "user_message":
@@ -700,6 +708,30 @@ export function branchSessionAt(sessionId: string, messageIndex: number): string
   };
   writeFileSync(sessionFilePath(newId), JSON.stringify(newRecord));
   return newId;
+}
+
+/** Renames an arbitrary session by id, straight off disk — same "not necessarily the live one"
+ * reasoning as branchSessionAt(). A live in-memory ServerSession for this id (if any) is kept
+ * in sync separately, by index.ts calling ServerSession.rename() alongside this. */
+export function renameSessionRecord(sessionId: string, title: string): boolean {
+  const path = findSessionPath(sessionId);
+  const record = path ? loadSessionRecord(path) : null;
+  if (!record) return false;
+  record.title = title;
+  record.updatedAt = new Date().toISOString();
+  writeFileSync(sessionFilePath(sessionId), JSON.stringify(record));
+  return true;
+}
+
+/** Deletes a session's persisted record and its private scratch directory. Does NOT touch any
+ * live in-memory ServerSession — index.ts's DELETE handler disposes that (if present) before
+ * calling this, so a session mid-turn isn't torn down from under itself. */
+export function deleteSessionRecord(sessionId: string): boolean {
+  const path = findSessionPath(sessionId);
+  if (!path) return false;
+  unlinkSync(path);
+  rmSync(join(stateDir(), "scratch", sessionId), { recursive: true, force: true });
+  return true;
 }
 
 /** Same shape as apps/desktop's Pi-backed SessionTreeNodeDTO (sessions.ts's treeToDTO) so the
