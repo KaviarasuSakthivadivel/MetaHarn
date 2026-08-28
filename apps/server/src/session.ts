@@ -30,6 +30,8 @@ import { ProviderRouter } from "@metaharn/engine/src/providers/router.js";
 import type { ProviderClient } from "@metaharn/engine/src/providers/base.js";
 import { AnthropicProvider } from "@metaharn/engine/src/providers/anthropic.js";
 import { OpenAIProvider } from "@metaharn/engine/src/providers/openai.js";
+import { GeminiProvider } from "@metaharn/engine/src/providers/gemini.js";
+import { BedrockProvider } from "@metaharn/engine/src/providers/bedrock.js";
 import { createTodoWriteTool, TodoList, type TodoItem } from "@metaharn/engine/src/tools/todo.js";
 import { createGrepTool } from "@metaharn/engine/src/tools/search.js";
 import { createGitLogTool } from "@metaharn/engine/src/tools/git.js";
@@ -50,7 +52,7 @@ import { AuditStore } from "@metaharn/engine/src/trust/auditStore.js";
 import type { ApprovalOutcome, ChatMessage, EngineEvent, Reviewer as ReviewerContract, TokenUsage, ToolDefinition } from "@metaharn/engine/src/types.js";
 import { buildContextDoc, whoOwns } from "@metaharn/context-engine";
 import { stateDir } from "./state.js";
-import { getAutoApprove, getDefaultModel, getWebSearchEnabled, PROVIDER_CATALOG, resolveProviderCredential } from "./providers.js";
+import { getAutoApprove, getDefaultModel, getWebSearchEnabled, PROVIDER_CATALOG, resolveBedrockCredential, resolveProviderCredential } from "./providers.js";
 import { isWorkspaceTrusted } from "./workspaceTrustApi.js";
 import { selfWakeToolsFor } from "./selfWakeApi.js";
 import { inboxApprover, inboxStore, toInboxResolution } from "./inboxApi.js";
@@ -187,6 +189,26 @@ function buildProviderClient(name: string): ProviderClient {
   if (name === "anthropic") {
     if (!apiKey) throw new Error("Anthropic isn't set up yet — add a key in Settings > Models.");
     return new AnthropicProvider(apiKey);
+  }
+  if (entry.kind === "gemini") {
+    if (!apiKey) throw new Error("Gemini isn't set up yet — add a key in Settings > Models.");
+    return new GeminiProvider({ apiKey });
+  }
+  if (entry.kind === "bedrock") {
+    // No single "isn't set up" check the way a plain apiKey provider gets — Bedrock's three
+    // auth methods (Bedrock API key, an AWS profile, or IAM keys) each have their own
+    // completeness rule, and the "profile"/default-chain methods are legitimately usable with
+    // every field blank (ambient ~/.aws credentials or an instance role) — see
+    // BedrockProvider's own module doc for what each option maps to.
+    const cred = resolveBedrockCredential();
+    return new BedrockProvider({
+      region: cred.region,
+      apiKey: cred.authMethod === "api_key" ? cred.bedrockApiKey : undefined,
+      profile: cred.authMethod === "profile" ? (cred.awsProfile ?? "") : undefined,
+      accessKeyId: cred.authMethod === "iam" ? cred.awsAccessKeyId : undefined,
+      secretAccessKey: cred.authMethod === "iam" ? cred.awsSecretAccessKey : undefined,
+      sessionToken: cred.authMethod === "iam" ? cred.awsSessionToken : undefined,
+    });
   }
   // Every other catalog entry (openai, ollama, and every OpenAI-compatible vendor added
   // alongside it) speaks the same Chat Completions wire shape — one client, routed by

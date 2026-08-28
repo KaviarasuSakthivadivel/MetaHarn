@@ -134,10 +134,13 @@ const server = createServer((req, res) => {
     if (providerMatch && req.method === "PUT") {
       const body = await readBody(req);
       try {
-        setProvider(providerMatch[1], {
-          apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
-          baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
-        });
+        // A plain string-keyed bag, not a fixed {apiKey, baseUrl} pair — most providers only
+        // ever send those two, but AWS Bedrock's form (region/authMethod/bedrockApiKey/
+        // awsProfile/accessKeyId/secretAccessKey/sessionToken) needs the rest of the fields
+        // to pass through untouched too.
+        const fields: Record<string, string | undefined> = {};
+        for (const [key, value] of Object.entries(body)) if (typeof value === "string") fields[key] = value;
+        setProvider(providerMatch[1], fields);
         json(res, 200, { ok: true });
       } catch (err) {
         json(res, 400, { error: (err as Error).message });
