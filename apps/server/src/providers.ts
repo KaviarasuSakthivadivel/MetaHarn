@@ -9,6 +9,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { SecretStore } from "@metaharn/engine/src/trust/secretStore.js";
+import { disableTelemetry, enableTelemetry } from "@metaharn/engine/src/telemetry.js";
 import { statePath } from "./state.js";
 
 export interface ProviderCatalogEntry {
@@ -73,6 +74,10 @@ function profileFor(name: string): ProviderProfile | undefined {
 export interface ProviderStatus extends ProviderCatalogEntry {
   configured: boolean;
   baseUrl?: string;
+  /** Whether enabling telemetry actually traces this provider's calls — every kind except
+   * "bedrock" is built on an SDK Laminar auto-instruments; see
+   * @metaharn/engine/src/telemetry.ts for exactly why Bedrock is the one exception. */
+  telemetryCovered: boolean;
 }
 
 /** Bedrock has no single "key" field — "configured" means whichever of its three auth
@@ -98,6 +103,7 @@ export function listProviders(): ProviderStatus[] {
       ...entry,
       configured: entry.noKeyNeeded ? true : hasKey,
       baseUrl: profile?.baseUrl ?? entry.defaultBaseUrl,
+      telemetryCovered: entry.kind !== "bedrock",
     };
   });
 }
@@ -212,4 +218,94 @@ export function getWebSearchEnabled(): boolean {
 export function setWebSearchEnabled(enabled: boolean): void {
   const merged = { ...readSettingsFile(), webSearchEnabled: enabled };
   writeFileSync(settingsPath(), JSON.stringify(merged, null, 2));
+}
+
+// -- telemetry (Laminar tracing — see @metaharn/engine/src/telemetry.ts for what's actually
+// covered and why AWS Bedrock isn't) --------------------------------------------------------
+
+const TELEMETRY_SECRET_KEY = "telemetry:laminar";
+
+/** Off by default — unlike web search, this is opt-in: enabling it sends real prompt/tool
+ * content to Laminar (cloud or self-hosted, the user's choice of endpoint), which is a real
+ * privacy decision this app shouldn't make silently on someone's behalf. */
+export function getTelemetryEnabled(): boolean {
+  const saved = readSettingsFile();
+  return typeof saved.telemetryEnabled === "boolean" ? saved.telemetryEnabled : false;
+}
+
+function telemetryProfile(): { apiKey?: string } | undefined {
+  return secretStore().get(TELEMETRY_SECRET_KEY) as { apiKey?: string } | undefined;
+}
+
+/** Saved key first, then LMNR_PROJECT_API_KEY (the SDK's own env var convention) — same
+ * layering as resolveProviderCredential(). */
+export function getTelemetryApiKey(): string | undefined {
+  return telemetryProfile()?.apiKey ?? process.env.LMNR_PROJECT_API_KEY;
+}
+
+export function isTelemetryConfigured(): boolean {
+  return Boolean(getTelemetryApiKey());
+}
+
+export function setTelemetryApiKey(apiKey: string): void {
+  secretStore().put(TELEMETRY_SECRET_KEY, { apiKey });
+}
+
+// Self-hosted by default (`docker compose up -d` from https://github.com/lmnr-ai/lmnr, per its
+// own docs) rather than Laminar Cloud — matches every other secret in this app staying local,
+// and real prompt/tool content is what a trace payload carries. httpPort/grpcPort 8000/8001 are
+// that stack's own ingestion ports (5667 is its dashboard, not the ingestion endpoint — a
+// different port on the exact same docker-compose.yml). Still fully overridable per field, for
+// Laminar Cloud (`https://api.lmnr.ai`, ports 443/8443, its own SDK defaults) or a self-hosted
+// instance on a different host.
+const DEFAULT_TELEMETRY_BASE_URL = "http://localhost";
+const DEFAULT_TELEMETRY_HTTP_PORT = 8000;
+const DEFAULT_TELEMETRY_GRPC_PORT = 8001;
+
+export interface TelemetryEndpointSettings {
+  baseUrl: string;
+  httpPort: number;
+  grpcPort: number;
+}
+
+export function getTelemetryEndpoint(): TelemetryEndpointSettings {
+  const saved = readSettingsFile();
+  return {
+    baseUrl: typeof saved.telemetryBaseUrl === "string" && saved.telemetryBaseUrl ? saved.telemetryBaseUrl : DEFAULT_TELEMETRY_BASE_URL,
+    httpPort: typeof saved.telemetryHttpPort === "number" ? saved.telemetryHttpPort : DEFAULT_TELEMETRY_HTTP_PORT,
+    grpcPort: typeof saved.telemetryGrpcPort === "number" ? saved.telemetryGrpcPort : DEFAULT_TELEMETRY_GRPC_PORT,
+  };
+}
+
+export function setTelemetryEndpoint(endpoint: Partial<TelemetryEndpointSettings>): void {
+  const merged = { ...readSettingsFile() };
+  if (endpoint.baseUrl !== undefined) merged.telemetryBaseUrl = endpoint.baseUrl;
+  if (endpoint.httpPort !== undefined) merged.telemetryHttpPort = endpoint.httpPort;
+  if (endpoint.grpcPort !== undefined) merged.telemetryGrpcPort = endpoint.grpcPort;
+  writeFileSync(settingsPath(), JSON.stringify(merged, null, 2));
+}
+
+/** Persists the toggle AND applies it live — enabling calls Laminar.initialize() immediately
+ * (no restart needed; a freshly-saved key/endpoint from the same request is picked up first),
+ * disabling calls Laminar.shutdown(). Throws if enabling with no key resolvable anywhere. */
+export async function setTelemetryEnabled(enabled: boolean): Promise<void> {
+  const merged = { ...readSettingsFile(), telemetryEnabled: enabled };
+  writeFileSync(settingsPath(), JSON.stringify(merged, null, 2));
+  if (enabled) {
+    const apiKey = getTelemetryApiKey();
+    if (!apiKey) throw new Error("No Laminar API key configured — add one before enabling telemetry.");
+    enableTelemetry(apiKey, getTelemetryEndpoint());
+  } else {
+    await disableTelemetry();
+  }
+}
+
+/** Called once at server boot — re-applies a previously-saved "enabled" setting so tracing
+ * resumes after a restart without the user having to re-toggle it. Silent no-op (not an error)
+ * if enabled but no key is configured — the Settings page surfaces that state instead. */
+export function initTelemetryFromSettings(): void {
+  if (getTelemetryEnabled()) {
+    const apiKey = getTelemetryApiKey();
+    if (apiKey) enableTelemetry(apiKey, getTelemetryEndpoint());
+  }
 }

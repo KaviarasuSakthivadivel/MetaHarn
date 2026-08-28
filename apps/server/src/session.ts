@@ -24,6 +24,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "@metaharn/engine/src/engine.js";
+import { traceTurn } from "@metaharn/engine/src/telemetry.js";
 import { ToolRegistry } from "@metaharn/engine/src/tools/registry.js";
 import { PermissionEngine } from "@metaharn/engine/src/permissions/engine.js";
 import { ProviderRouter } from "@metaharn/engine/src/providers/router.js";
@@ -448,7 +449,12 @@ export class ServerSession {
     this.running = true;
     this.errorMessage = undefined;
     try {
-      for await (const event of events) this.forward(event);
+      // One trace per turn, not one per LLM call inside it — see telemetry.ts's traceTurn()
+      // doc for why that grouping doesn't happen for free. sessionId also groups every turn
+      // in this chat under one Laminar session.
+      await traceTurn(this.sessionId, async () => {
+        for await (const event of events) this.forward(event);
+      });
     } catch (err) {
       this.errorMessage = (err as Error).message;
       this.listener?.({ type: "error", message: this.errorMessage });

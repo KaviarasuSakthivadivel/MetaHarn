@@ -35,7 +35,22 @@ import {
 import type { ApprovalOutcome } from "@metaharn/engine/src/types.js";
 import type { Scope } from "@metaharn/engine/src/memory/types.js";
 import type { Schedule } from "@metaharn/engine/src/automation/models.js";
-import { deleteProvider, getWebSearchEnabled, listProviders, setAutoApprove, setDefaultModel, setProvider, setWebSearchEnabled } from "./providers.js";
+import {
+  deleteProvider,
+  getTelemetryEnabled,
+  getTelemetryEndpoint,
+  getWebSearchEnabled,
+  initTelemetryFromSettings,
+  isTelemetryConfigured,
+  listProviders,
+  setAutoApprove,
+  setDefaultModel,
+  setProvider,
+  setTelemetryApiKey,
+  setTelemetryEnabled,
+  setTelemetryEndpoint,
+  setWebSearchEnabled,
+} from "./providers.js";
 import { isWorkspaceTrusted, setWorkspaceTrust } from "./workspaceTrustApi.js";
 import { listPendingInbox, resolveInboxItem } from "./inboxApi.js";
 import { addMemory, deleteMemory, listMemories, updateMemory } from "./memoryApi.js";
@@ -69,6 +84,11 @@ writeFileSync(tokenPath, TOKEN, { mode: 0o600 });
 console.log(`[metaharn-server] token written to ${tokenPath}`);
 
 const sessions = new Map<string, ServerSession>();
+
+// Re-applies a previously-saved "telemetry enabled" setting so tracing resumes after a
+// restart — must run before any session/provider gets constructed, so this sits at the top of
+// the boot sequence, well before the server starts accepting the requests that would create one.
+initTelemetryFromSettings();
 
 function checkToken(headerToken: string | undefined, queryToken: string | undefined): boolean {
   return headerToken === TOKEN || queryToken === TOKEN;
@@ -221,7 +241,14 @@ const server = createServer((req, res) => {
 
 
     if (url.pathname === "/v1/settings" && req.method === "GET") {
-      json(res, 200, { defaultModel: getModelConfig(), autoApprove: autoApproveEnabled(), webSearchEnabled: getWebSearchEnabled() });
+      json(res, 200, {
+        defaultModel: getModelConfig(),
+        autoApprove: autoApproveEnabled(),
+        webSearchEnabled: getWebSearchEnabled(),
+        telemetryEnabled: getTelemetryEnabled(),
+        telemetryConfigured: isTelemetryConfigured(),
+        telemetryEndpoint: getTelemetryEndpoint(),
+      });
       return;
     }
     if (url.pathname === "/v1/settings/auto-approve" && req.method === "PUT") {
@@ -234,6 +261,22 @@ const server = createServer((req, res) => {
       const body = await readBody(req);
       setWebSearchEnabled(Boolean(body.enabled));
       json(res, 200, { ok: true });
+      return;
+    }
+    if (url.pathname === "/v1/settings/telemetry" && req.method === "PUT") {
+      const body = await readBody(req);
+      try {
+        if (typeof body.apiKey === "string" && body.apiKey) setTelemetryApiKey(body.apiKey);
+        const endpoint: Partial<{ baseUrl: string; httpPort: number; grpcPort: number }> = {};
+        if (typeof body.baseUrl === "string" && body.baseUrl) endpoint.baseUrl = body.baseUrl;
+        if (typeof body.httpPort === "number") endpoint.httpPort = body.httpPort;
+        if (typeof body.grpcPort === "number") endpoint.grpcPort = body.grpcPort;
+        if (Object.keys(endpoint).length) setTelemetryEndpoint(endpoint);
+        if (typeof body.enabled === "boolean") await setTelemetryEnabled(body.enabled);
+        json(res, 200, { ok: true });
+      } catch (err) {
+        json(res, 400, { error: (err as Error).message });
+      }
       return;
     }
 
