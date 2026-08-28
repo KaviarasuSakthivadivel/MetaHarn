@@ -22,6 +22,7 @@
  *   for display — it is never replayed as a plain-text turn.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import type { AnthropicBedrock } from "@anthropic-ai/bedrock-sdk";
 import type {
   AssistantTurn,
   ChatMessage,
@@ -281,11 +282,18 @@ const DEFAULT_CAPABILITIES: ModelCapabilities = {
 // prefix gets the modern default below instead of an ever-growing enumerated list.
 const LEGACY_PREFIXES = ["claude-instant", "claude-2", "claude-1"];
 
-export class AnthropicProvider implements ProviderClient {
-  private readonly client: Anthropic;
+// `AnthropicBedrock` (providers/bedrock.ts) is a sibling `BaseAnthropic` subclass with its
+// own narrower `.messages` resource type (missing `batches`/`countTokens`, neither ever
+// called here) — a plain `Pick<Anthropic, "messages">` doesn't structurally accept it, so the
+// client field is typed as the explicit union of the two concrete classes this package
+// actually constructs instead.
+type AnthropicLikeClient = Anthropic | AnthropicBedrock;
 
-  constructor(apiKey: string) {
-    this.client = new Anthropic({ apiKey });
+export class AnthropicProvider implements ProviderClient {
+  private readonly client: AnthropicLikeClient;
+
+  constructor(apiKeyOrClient: string | AnthropicLikeClient) {
+    this.client = typeof apiKeyOrClient === "string" ? new Anthropic({ apiKey: apiKeyOrClient }) : apiKeyOrClient;
   }
 
   async complete(req: CompletionRequest): Promise<AssistantTurn> {
