@@ -21,6 +21,13 @@ import deepseekColorSvg from "@lobehub/icons-static-svg/icons/deepseek-color.svg
 import groqSvg from "@lobehub/icons-static-svg/icons/groq.svg?raw";
 import mistralColorSvg from "@lobehub/icons-static-svg/icons/mistral-color.svg?raw";
 import grokSvg from "@lobehub/icons-static-svg/icons/grok.svg?raw";
+import geminiColorSvg from "@lobehub/icons-static-svg/icons/gemini-color.svg?raw";
+import bedrockColorSvg from "@lobehub/icons-static-svg/icons/bedrock-color.svg?raw";
+import zhipuColorSvg from "@lobehub/icons-static-svg/icons/zhipu-color.svg?raw";
+import kimiColorSvg from "@lobehub/icons-static-svg/icons/kimi-color.svg?raw";
+import minimaxColorSvg from "@lobehub/icons-static-svg/icons/minimax-color.svg?raw";
+import qwenColorSvg from "@lobehub/icons-static-svg/icons/qwen-color.svg?raw";
+import metaColorSvg from "@lobehub/icons-static-svg/icons/meta-color.svg?raw";
 
 const PROVIDER_ICON_SVG: Record<string, string> = {
   anthropic: claudeColorSvg,
@@ -33,6 +40,13 @@ const PROVIDER_ICON_SVG: Record<string, string> = {
   groq: groqSvg,
   mistral: mistralColorSvg,
   xai: grokSvg,
+  gemini: geminiColorSvg,
+  bedrock: bedrockColorSvg,
+  zai: zhipuColorSvg,
+  kimi: kimiColorSvg,
+  minimax: minimaxColorSvg,
+  qwen: qwenColorSvg,
+  meta: metaColorSvg,
 };
 
 /** Renders a vendor's real SVG mark from PROVIDER_ICON_SVG — build-time trusted content (an
@@ -174,6 +188,23 @@ const PROVIDER_MODELS: Record<string, CuratedModel[]> = {
     { id: "grok-4", label: "Grok 4" },
     { id: "grok-4-fast", label: "Grok 4 Fast" },
   ],
+  gemini: [
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+    { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (preview)" },
+    { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  ],
+  // Claude-family only — see BedrockProvider's own module doc for why this integration
+  // doesn't reach Bedrock's other models (Nova, Llama, Mistral, …) via the Converse API.
+  bedrock: [
+    { id: "anthropic.claude-sonnet-4-6-v1:0", label: "Claude Sonnet 4.6" },
+    { id: "anthropic.claude-haiku-4-5-v1:0", label: "Claude Haiku 4.5" },
+  ],
+  zai: [{ id: "glm-5.2", label: "GLM-5.2" }],
+  kimi: [{ id: "kimi-k2.6", label: "Kimi K2.6" }],
+  minimax: [{ id: "MiniMax-M2.5", label: "MiniMax M2.5" }],
+  qwen: [{ id: "qwen3-max", label: "Qwen3 Max" }],
+  meta: [{ id: "muse-spark-1.1", label: "Muse Spark 1.1" }],
 };
 
 const MODEL_PLACEHOLDER: Record<string, string> = Object.fromEntries(
@@ -191,6 +222,13 @@ const PROVIDER_DESCRIPTIONS: Record<string, string> = {
   groq: "Open-weight models served on Groq's LPU hardware — very low latency.",
   mistral: "Mistral's own API, including Codestral for code.",
   xai: "Grok models via xAI's own API.",
+  gemini: "Google's own Gemini API — thinking models by default, native vision and PDF support.",
+  bedrock: "Claude models running inside your own AWS account, via Anthropic's native Bedrock path.",
+  zai: "Z AI's own API — the GLM model family.",
+  kimi: "Moonshot AI's own API — the Kimi model family.",
+  minimax: "MiniMax's own API.",
+  qwen: "Alibaba's own API — the Qwen model family.",
+  meta: "Meta's own Model API (public preview) — the Muse Spark family.",
 };
 
 function ModelsTab() {
@@ -247,6 +285,129 @@ function ModelsTab() {
         ))}
       </div>
     </>
+  );
+}
+
+type BedrockAuthMethod = "api_key" | "profile" | "iam";
+
+/** AWS Bedrock's own form — three mutually exclusive auth methods (mirrors OpenWorker's
+ * Settings > Models > AWS Bedrock descriptor exactly), not the single apiKey/baseUrl pair
+ * every other provider's card uses. */
+function BedrockFields({ provider, onSaved }: { provider: ProviderStatus; onSaved: () => void }) {
+  const [authMethod, setAuthMethod] = useState<BedrockAuthMethod>("api_key");
+  const [region, setRegion] = useState("");
+  const [bedrockApiKey, setBedrockApiKey] = useState("");
+  const [awsProfile, setAwsProfile] = useState("");
+  const [awsAccessKeyId, setAwsAccessKeyId] = useState("");
+  const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
+  const [awsSessionToken, setAwsSessionToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  async function save() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await client.setProvider("bedrock", {
+        region: region || undefined,
+        authMethod,
+        ...(authMethod === "api_key" ? { bedrockApiKey } : {}),
+        ...(authMethod === "profile" ? { awsProfile } : {}),
+        ...(authMethod === "iam" ? { awsAccessKeyId, awsSecretAccessKey, awsSessionToken } : {}),
+      });
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clear() {
+    setBusy(true);
+    try {
+      await client.deleteProviderKey("bedrock");
+      onSaved();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 24, maxWidth: 640 }}>
+      {error && <div className="error-banner">{error}</div>}
+
+      <div className="field-label">AWS region</div>
+      <p className="desc" style={{ margin: "0 0 8px" }}>The region your Bedrock model access is enabled in.</p>
+      <div className="field-row">
+        <input placeholder="us-east-1" value={region} onChange={(e) => setRegion(e.target.value)} style={{ fontFamily: "var(--font-mono)" }} />
+      </div>
+
+      <div className="field-label" style={{ marginTop: 18 }}>Connect with</div>
+      <div className="field-row">
+        <select value={authMethod} onChange={(e) => setAuthMethod(e.target.value as BedrockAuthMethod)}>
+          <option value="api_key">Bedrock API key — easiest</option>
+          <option value="profile">AWS profile</option>
+          <option value="iam">IAM keys</option>
+        </select>
+      </div>
+
+      {authMethod === "api_key" && (
+        <>
+          <div className="field-label" style={{ marginTop: 18 }}>Bedrock API key</div>
+          <p className="desc" style={{ margin: "0 0 8px" }}>A single key generated on the Bedrock console — no AWS CLI or IAM setup needed.</p>
+          <div className="field-row">
+            <input
+              type="password"
+              placeholder="ABSK…"
+              value={bedrockApiKey}
+              onChange={(e) => setBedrockApiKey(e.target.value)}
+              style={{ fontFamily: "var(--font-mono)" }}
+            />
+          </div>
+        </>
+      )}
+      {authMethod === "profile" && (
+        <>
+          <div className="field-label" style={{ marginTop: 18 }}>AWS profile</div>
+          <p className="desc" style={{ margin: "0 0 8px" }}>
+            Uses a named profile from ~/.aws — works with <code className="inline-code">aws configure</code> and{" "}
+            <code className="inline-code">aws sso login</code>. Leave blank to use your default AWS credentials.
+          </p>
+          <div className="field-row">
+            <input placeholder="default" value={awsProfile} onChange={(e) => setAwsProfile(e.target.value)} style={{ fontFamily: "var(--font-mono)" }} />
+          </div>
+        </>
+      )}
+      {authMethod === "iam" && (
+        <>
+          <div className="field-label" style={{ marginTop: 18 }}>Access key ID</div>
+          <div className="field-row">
+            <input placeholder="AKIA…" value={awsAccessKeyId} onChange={(e) => setAwsAccessKeyId(e.target.value)} style={{ fontFamily: "var(--font-mono)" }} />
+          </div>
+          <div className="field-label" style={{ marginTop: 18 }}>Secret access key</div>
+          <div className="field-row">
+            <input type="password" value={awsSecretAccessKey} onChange={(e) => setAwsSecretAccessKey(e.target.value)} style={{ fontFamily: "var(--font-mono)" }} />
+          </div>
+          <div className="field-label" style={{ marginTop: 18 }}>Session token (STS only, optional)</div>
+          <p className="desc" style={{ margin: "0 0 8px" }}>For temporary STS credentials.</p>
+          <div className="field-row">
+            <input type="password" value={awsSessionToken} onChange={(e) => setAwsSessionToken(e.target.value)} style={{ fontFamily: "var(--font-mono)" }} />
+          </div>
+        </>
+      )}
+
+      <div className="field-row" style={{ marginTop: 20, justifyContent: "flex-start" }}>
+        <button className="btn-primary accent" style={{ flex: "none" }} disabled={busy} onClick={save}>
+          Save
+        </button>
+        {provider.configured && (
+          <button className="link-danger" disabled={busy} onClick={clear}>
+            Remove credentials
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -317,6 +478,8 @@ function ProviderDetailPage({
         <div className="provider-no-key" style={{ marginTop: 20 }}>
           No API key needed — talks to {provider.baseUrl}.
         </div>
+      ) : provider.name === "bedrock" ? (
+        <BedrockFields provider={provider} onSaved={onSaved} />
       ) : (
         <div style={{ marginTop: 24, maxWidth: 640 }}>
           <div className="field-label">{provider.displayName} API key</div>

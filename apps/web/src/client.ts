@@ -60,6 +60,8 @@ export interface ProviderStatus {
   noKeyNeeded: boolean;
   configured: boolean;
   baseUrl?: string;
+  /** Present only for providers with a dispatch-specific client (currently "gemini"/"bedrock") — see apps/server/src/providers.ts's ProviderCatalogEntry. */
+  kind?: "gemini" | "bedrock";
 }
 
 export type MemoryScope = "global" | "workspace";
@@ -247,7 +249,10 @@ export function listProviders(): Promise<{ providers: ProviderStatus[] }> {
   return request("/v1/providers");
 }
 
-export function setProvider(name: string, input: { apiKey?: string; baseUrl?: string }): Promise<void> {
+// A plain string-keyed bag, not a fixed {apiKey, baseUrl} pair — AWS Bedrock's form
+// (region/authMethod/bedrockApiKey/awsProfile/awsAccessKeyId/awsSecretAccessKey/
+// awsSessionToken) needs the rest of the fields to pass through untouched too.
+export function setProvider(name: string, input: Record<string, string | undefined>): Promise<void> {
   return request(`/v1/providers/${name}`, { method: "PUT", body: JSON.stringify(input) });
 }
 
