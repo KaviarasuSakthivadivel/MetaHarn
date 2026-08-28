@@ -1349,6 +1349,46 @@
   color: #fff;
 }
 
+.method-tabs {
+  display: inline-flex;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  background: var(--paper-dim);
+}
+
+.method-tab {
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.method-tab:hover {
+  color: var(--text);
+}
+
+.method-tab.active {
+  background: var(--paper);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.method-tab-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent-strong);
+  margin-left: 6px;
+}
+
 .settings-body {
   flex: 1;
   overflow-y: auto;

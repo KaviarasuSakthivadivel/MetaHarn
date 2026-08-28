@@ -24,7 +24,12 @@ import grokSvg from "@lobehub/icons-static-svg/icons/grok.svg?raw";
 import geminiColorSvg from "@lobehub/icons-static-svg/icons/gemini-color.svg?raw";
 import bedrockColorSvg from "@lobehub/icons-static-svg/icons/bedrock-color.svg?raw";
 import zhipuColorSvg from "@lobehub/icons-static-svg/icons/zhipu-color.svg?raw";
-import kimiColorSvg from "@lobehub/icons-static-svg/icons/kimi-color.svg?raw";
+// Not kimi-color.svg: its "K" mark is fill="#fff" with no covering backdrop shape behind it
+// (unlike Gemini/Bedrock/Meta's -color variants, which are self-contained) — on this app's
+// white .provider-icon background it renders as an invisible white-on-white mark. The plain
+// kimi.svg uses fill="currentColor" throughout, same pattern already used for OpenAI/Ollama/
+// Groq above, and inherits --ink correctly.
+import kimiSvg from "@lobehub/icons-static-svg/icons/kimi.svg?raw";
 import minimaxColorSvg from "@lobehub/icons-static-svg/icons/minimax-color.svg?raw";
 import qwenColorSvg from "@lobehub/icons-static-svg/icons/qwen-color.svg?raw";
 import metaColorSvg from "@lobehub/icons-static-svg/icons/meta-color.svg?raw";
@@ -43,7 +48,7 @@ const PROVIDER_ICON_SVG: Record<string, string> = {
   gemini: geminiColorSvg,
   bedrock: bedrockColorSvg,
   zai: zhipuColorSvg,
-  kimi: kimiColorSvg,
+  kimi: kimiSvg,
   minimax: minimaxColorSvg,
   qwen: qwenColorSvg,
   meta: metaColorSvg,
@@ -344,12 +349,17 @@ function BedrockFields({ provider, onSaved }: { provider: ProviderStatus; onSave
       </div>
 
       <div className="field-label" style={{ marginTop: 18 }}>Connect with</div>
-      <div className="field-row">
-        <select value={authMethod} onChange={(e) => setAuthMethod(e.target.value as BedrockAuthMethod)}>
-          <option value="api_key">Bedrock API key — easiest</option>
-          <option value="profile">AWS profile</option>
-          <option value="iam">IAM keys</option>
-        </select>
+      <div className="method-tabs" role="tablist" aria-label="Bedrock auth method">
+        <button type="button" role="tab" aria-selected={authMethod === "api_key"} className={`method-tab${authMethod === "api_key" ? " active" : ""}`} onClick={() => setAuthMethod("api_key")}>
+          Bedrock API key
+          <span className="method-tab-tag">Easiest</span>
+        </button>
+        <button type="button" role="tab" aria-selected={authMethod === "profile"} className={`method-tab${authMethod === "profile" ? " active" : ""}`} onClick={() => setAuthMethod("profile")}>
+          AWS profile
+        </button>
+        <button type="button" role="tab" aria-selected={authMethod === "iam"} className={`method-tab${authMethod === "iam" ? " active" : ""}`} onClick={() => setAuthMethod("iam")}>
+          IAM keys
+        </button>
       </div>
 
       {authMethod === "api_key" && (
