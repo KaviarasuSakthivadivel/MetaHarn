@@ -106,7 +106,14 @@ services:
       BACKEND_RT_URL: http://lmnr-app-server:8002
       SHARED_SECRET_TOKEN: some_secret
       NEXTAUTH_URL: http://localhost:5667
-      NEXTAUTH_SECRET: 0123456789abcdef0123456789abcdef
+      # Literal "some_secret", NOT the .env file's own NEXTAUTH_SECRET value — the upstream
+      # docker-compose.yml hardcodes this one literally rather than reading it from .env (that
+      # var goes unused for this key), so THIS is what actually encrypted the JWKS private key
+      # already sitting in the migrated Postgres volume. Mismatching it is silent until the
+      # frontend tries to decrypt that key — confirmed live: this exact wrong value produced
+      # "Failed to decrypt private key" and a broken /sign-in page after the compose-file
+      # migration, fixed by matching upstream's hardcoded literal instead of the .env value.
+      NEXTAUTH_SECRET: some_secret
       NEXT_PUBLIC_URL: http://localhost:5667
       ENVIRONMENT: LITE # disables some runtime dependencies (RabbitMQ etc.)
       CLICKHOUSE_URL: http://lmnr-clickhouse:8123

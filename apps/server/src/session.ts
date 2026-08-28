@@ -33,6 +33,7 @@ import { AnthropicProvider } from "@metaharn/engine/src/providers/anthropic.js";
 import { OpenAIProvider } from "@metaharn/engine/src/providers/openai.js";
 import { GeminiProvider } from "@metaharn/engine/src/providers/gemini.js";
 import { BedrockProvider } from "@metaharn/engine/src/providers/bedrock.js";
+import { CodexProvider } from "@metaharn/engine/src/providers/codex.js";
 import { createTodoWriteTool, TodoList, type TodoItem } from "@metaharn/engine/src/tools/todo.js";
 import { createGrepTool } from "@metaharn/engine/src/tools/search.js";
 import { createGitLogTool } from "@metaharn/engine/src/tools/git.js";
@@ -53,7 +54,15 @@ import { AuditStore } from "@metaharn/engine/src/trust/auditStore.js";
 import type { ApprovalOutcome, ChatMessage, EngineEvent, Reviewer as ReviewerContract, TokenUsage, ToolDefinition } from "@metaharn/engine/src/types.js";
 import { buildContextDoc, whoOwns } from "@metaharn/context-engine";
 import { stateDir } from "./state.js";
-import { getAutoApprove, getDefaultModel, getWebSearchEnabled, PROVIDER_CATALOG, resolveBedrockCredential, resolveProviderCredential } from "./providers.js";
+import {
+  getAutoApprove,
+  getDefaultModel,
+  getWebSearchEnabled,
+  PROVIDER_CATALOG,
+  providerSecretStore,
+  resolveBedrockCredential,
+  resolveProviderCredential,
+} from "./providers.js";
 import { isWorkspaceTrusted } from "./workspaceTrustApi.js";
 import { selfWakeToolsFor } from "./selfWakeApi.js";
 import { inboxApprover, inboxStore, toInboxResolution } from "./inboxApi.js";
@@ -100,6 +109,11 @@ interface SessionRecord {
    * by getSessionTree() to graft a branch onto the exact node it split from, instead of onto
    * the parent's tail. */
   branchPointIndex?: number;
+  /** `provider:modelId`, set the moment a chat picks a model in the composer — absent means
+   * "still on whatever the global default was when this session was created," resolved the
+   * same way it always was. Persisted so switching models sticks across a reconnect instead of
+   * reverting to the global default every time. */
+  model?: string;
 }
 
 function loadSessionRecord(path: string): SessionRecord | null {
@@ -194,6 +208,11 @@ function buildProviderClient(name: string): ProviderClient {
   if (entry.kind === "gemini") {
     if (!apiKey) throw new Error("Gemini isn't set up yet — add a key in Settings > Models.");
     return new GeminiProvider({ apiKey });
+  }
+  if (entry.kind === "openai-codex") {
+    // No key to check — CodexProvider throws its own typed sign-in-required error per call
+    // if the SecretStore profile has no tokens yet.
+    return new CodexProvider(providerSecretStore());
   }
   if (entry.kind === "bedrock") {
     // No single "isn't set up" check the way a plain apiKey provider gets — Bedrock's three
@@ -293,12 +312,16 @@ export interface SessionOptions {
    * automation/models.ts's standingRules), checked by PermissionEngine regardless of mode.
    * Same mechanism apps/desktop's ownedEngine.ts uses for automation runs. */
   taskRules?: Map<string, Set<string>>;
+  /** Carried forward from the SessionRecord on resume — see SessionRecord.model. Absent means
+   * "use the global default," same as always. */
+  model?: string;
 }
 
 export class ServerSession {
   readonly sessionId: string;
   readonly cwd: string;
   private title: string;
+  private model: string;
   private readonly createdAt: string;
   // Lineage, set once at construction and never reassigned — persist() must keep re-writing
   // these on every save (they're not in `messages`), or a branched session silently reverts to
@@ -331,6 +354,14 @@ export class ServerSession {
 
     const { provider: defaultProvider, modelId: defaultModelId } = getDefaultModel();
     const provider = new ProviderRouter({ buildClient: buildProviderClient, defaultProvider, knownProviders: KNOWN_PROVIDERS });
+    this.model = opts.model ?? `${defaultProvider}:${defaultModelId}`;
+    // The active provider's own name, for the context-window lookup below — NOT always
+    // `defaultProvider`: opts.model (a resumed or just-switched session) can carry a
+    // different provider prefix than whatever the global default happens to be right now.
+    // Same prefix-parsing ProviderRouter itself does internally.
+    const modelPrefixEnd = this.model.indexOf(":");
+    const activeProvider =
+      modelPrefixEnd === -1 ? defaultProvider : KNOWN_PROVIDERS.includes(this.model.slice(0, modelPrefixEnd)) ? this.model.slice(0, modelPrefixEnd) : defaultProvider;
 
     const registry = new ToolRegistry();
     registry.register(createTodoWriteTool(this.todo));
@@ -378,7 +409,7 @@ export class ServerSession {
     let instructions = `${BASE_INSTRUCTIONS}\n\n${buildContextDoc(repoPath)}`;
     if (memoryBlock) instructions += `\n\n${MEMORY_GUIDANCE}\n\n${memoryBlock}`;
 
-    const model = `${defaultProvider}:${defaultModelId}`;
+    const model = this.model;
 
     this.engine = new Engine({
       provider,
@@ -392,7 +423,7 @@ export class ServerSession {
       // this.permissions.roots (mutable by reference) fresh each call rather than capturing
       // it once. Never persisted (Engine.outboundMessages() appends it ephemerally).
       contextProvider: () => renderContext(normalizeRoots(this.permissions.roots)),
-      compaction: createCompactionHook({ provider, model, contextWindow: CONTEXT_WINDOW_BY_PROVIDER[defaultProvider] }),
+      compaction: createCompactionHook({ provider, model, contextWindow: CONTEXT_WINDOW_BY_PROVIDER[activeProvider] }),
       auditSink: (event) => this.auditStore.append({ ...event, sessionId: this.sessionId }),
       // Interactive approvals go through the durable Inbox (inboxApi.ts), not a bare
       // in-memory resolver — closing this process with an approval still outstanding no
@@ -485,6 +516,7 @@ export class ServerSession {
       messages: structuredClone(this.engine.messages.slice(0, messageIndex + 1)),
       parentId: this.sessionId,
       branchPointIndex: messageIndex,
+      model: this.model,
     };
     writeFileSync(sessionFilePath(newId), JSON.stringify(record));
     return newId;
@@ -509,6 +541,7 @@ export class ServerSession {
       messages: this.engine.messages,
       parentId: this.parentId,
       branchPointIndex: this.branchPointIndex,
+      model: this.model,
     };
     try {
       writeFileSync(sessionFilePath(this.sessionId), JSON.stringify(record));
@@ -522,6 +555,24 @@ export class ServerSession {
    * overwriting it once the first real message lands. */
   rename(title: string): void {
     this.title = title;
+    this.persist();
+  }
+
+  /** `provider:modelId` split back into parts — what the composer's model picker shows as
+   * selected, and what a fresh connect response reports so a reload doesn't silently forget a
+   * mid-chat model switch. */
+  get currentModel(): { provider: string; modelId: string } {
+    const i = this.model.indexOf(":");
+    return i === -1 ? { provider: "anthropic", modelId: this.model } : { provider: this.model.slice(0, i), modelId: this.model.slice(i + 1) };
+  }
+
+  /** Rebind this session's active model — takes effect on the very next turn (Engine.
+   * switchModel() just rebinds a field the next model call reads; history is canonical and
+   * provider-agnostic, so nothing about past turns needs to change). Persisted immediately so
+   * the choice survives a reconnect, not just the rest of this live session. */
+  setModel(provider: string, modelId: string): void {
+    this.model = `${provider}:${modelId}`;
+    this.engine.switchModel(this.model);
     this.persist();
   }
 
@@ -670,6 +721,7 @@ export async function createSession(
     parentId: record?.parentId,
     branchPointIndex: record?.branchPointIndex,
     title: record?.title,
+    model: record?.model,
     knownWorld,
     unattended: opts.unattended,
     autoAllowTools: opts.autoAllowTools,
@@ -711,6 +763,7 @@ export function branchSessionAt(sessionId: string, messageIndex: number): string
     messages: structuredClone(record.messages.slice(0, messageIndex + 1)),
     parentId: sessionId,
     branchPointIndex: messageIndex,
+    model: record.model,
   };
   writeFileSync(sessionFilePath(newId), JSON.stringify(newRecord));
   return newId;

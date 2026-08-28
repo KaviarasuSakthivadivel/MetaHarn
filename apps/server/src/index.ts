@@ -52,6 +52,7 @@ import {
   setWebSearchEnabled,
 } from "./providers.js";
 import { isWorkspaceTrusted, setWorkspaceTrust } from "./workspaceTrustApi.js";
+import { beginCodexSignIn, codexSignOut, codexStatus, runCodexSignIn } from "./codexAuthApi.js";
 import { listPendingInbox, resolveInboxItem } from "./inboxApi.js";
 import { addMemory, deleteMemory, listMemories, updateMemory } from "./memoryApi.js";
 import { deleteMcpServer, listMcpServers, putMcpServer, testMcpServer, type McpServerInput } from "./mcpApi.js";
@@ -206,6 +207,23 @@ const server = createServer((req, res) => {
 
     if (url.pathname === "/v1/providers" && req.method === "GET") {
       json(res, 200, { providers: listProviders() });
+      return;
+    }
+
+    // -- ChatGPT-subscription sign-in (OAuth, no key) — the interactive flow runs in the
+    // background; the GUI polls status for the flip from "authorizing" to signed-in/error. --
+    if (url.pathname === "/v1/providers/openai-codex/signin" && req.method === "POST") {
+      beginCodexSignIn();
+      void runCodexSignIn();
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (url.pathname === "/v1/providers/openai-codex/status" && req.method === "GET") {
+      json(res, 200, codexStatus());
+      return;
+    }
+    if (url.pathname === "/v1/providers/openai-codex/signout" && req.method === "POST") {
+      json(res, 200, codexSignOut());
       return;
     }
 
@@ -456,6 +474,7 @@ const server = createServer((req, res) => {
           usage: session.usage,
           todos: session.todos,
           roots: session.roots,
+          model: session.currentModel,
         });
       } catch (err) {
         json(res, 500, { error: (err as Error).message });
@@ -522,6 +541,25 @@ const server = createServer((req, res) => {
         return;
       }
       json(res, 200, { ok: true });
+      return;
+    }
+
+    const modelMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/model$/);
+    if (modelMatch && req.method === "PUT") {
+      const session = sessions.get(modelMatch[1]);
+      if (!session) {
+        json(res, 404, { error: "no such session" });
+        return;
+      }
+      const body = await readBody(req);
+      const provider = String(body.provider ?? "");
+      const modelId = String(body.modelId ?? "");
+      if (!provider || !modelId) {
+        json(res, 400, { error: "provider and modelId are required" });
+        return;
+      }
+      session.setModel(provider, modelId);
+      json(res, 200, { ok: true, model: session.currentModel });
       return;
     }
 

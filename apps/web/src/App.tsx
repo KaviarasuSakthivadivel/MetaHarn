@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as client from "./client.js";
-import type { ApprovalOutcome, HistoryMessage, ServerEvent, SessionListItem, SessionTreeNode, TokenUsage } from "./client.js";
+import type { ApprovalOutcome, HistoryMessage, ProviderStatus, ServerEvent, SessionListItem, SessionModel, SessionTreeNode, TokenUsage } from "./client.js";
 import { isNativePickerAvailable, pickFolder } from "./folderPicker.js";
+import { PROVIDER_MODELS, ProviderIcon } from "./providerCatalog.js";
 import Settings from "./Settings.js";
 import Markdown, { type CanvasPayload } from "./Markdown.js";
 import CanvasPanel from "./CanvasPanel.js";
@@ -186,6 +187,94 @@ function IconTrash() {
   );
 }
 
+function IconChevronDown() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+      <polyline points="6 9 12 15 18 9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Composer's model picker — providers filtered to only the ones actually configured (a key
+ * saved, or signed in for the ChatGPT-subscription OAuth provider), each showing its curated
+ * model list from providerCatalog.ts. Re-fetches the provider list on open, not just on
+ * mount, so adding a key in Settings and coming straight back shows up without a reload. */
+function ModelPicker({
+  current,
+  onSelect,
+  onOpen,
+  providers,
+}: {
+  current: SessionModel | null;
+  onSelect: (provider: string, modelId: string) => void;
+  onOpen: () => void;
+  providers: ProviderStatus[];
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const configured = providers.filter((p) => p.configured);
+  const currentLabel = current ? (PROVIDER_MODELS[current.provider]?.find((m) => m.id === current.modelId)?.label ?? current.modelId) : "Model";
+
+  return (
+    <div className="model-picker" ref={ref}>
+      <button
+        type="button"
+        className="model-picker-trigger"
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          if (next) onOpen();
+        }}
+      >
+        <span className="model-picker-icon">
+          <ProviderIcon name={current?.provider ?? ""} />
+        </span>
+        <span className="model-picker-label">{currentLabel}</span>
+        <IconChevronDown />
+      </button>
+      {open && (
+        <div className="model-picker-menu">
+          {configured.length === 0 ? (
+            <div className="model-picker-empty">No providers configured yet — add one in Settings ▸ Models.</div>
+          ) : (
+            configured.map((p) => (
+              <div className="model-picker-group" key={p.name}>
+                <div className="model-picker-group-label">
+                  <ProviderIcon name={p.name} />
+                  {p.displayName}
+                </div>
+                {(PROVIDER_MODELS[p.name] ?? []).map((m) => (
+                  <button
+                    type="button"
+                    key={m.id}
+                    className={`model-picker-option${current?.provider === p.name && current?.modelId === m.id ? " active" : ""}`}
+                    onClick={() => {
+                      onSelect(p.name, m.id);
+                      setOpen(false);
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [connectError, setConnectError] = useState<string | undefined>();
   const [repoPath, setRepoPath] = useState("");
@@ -212,14 +301,32 @@ export default function App() {
   const [showSessionPanel, setShowSessionPanel] = useState(false);
   const [groupOverrides, setGroupOverrides] = useState<Record<number, boolean>>({});
   const [webSearchEnabled, setWebSearchEnabledState] = useState(true);
+  const [currentModel, setCurrentModel] = useState<SessionModel | null>(null);
+  const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  function refreshProviders() {
+    client.listProviders().then((r) => setProviders(r.providers)).catch(() => {});
+  }
 
   useEffect(() => {
     client.listSessions().then((r) => setSessions(r.sessions)).catch(() => {});
     isNativePickerAvailable().then(setNativePicker);
     client.getSettings().then((s) => setWebSearchEnabledState(s.webSearchEnabled)).catch(() => {});
+    refreshProviders();
   }, []);
+
+  // Auto-grow the composer textarea up to a cap (shell.css bounds it visually too) — plain
+  // height reset + re-measure, the standard technique since a textarea can't report its own
+  // "natural" height without first collapsing to let scrollHeight reflect the new content.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [input]);
 
   // Badge-only poll — InboxPage does its own on-demand fetch/refresh; this just keeps the
   // sidebar count roughly current without requiring the page to be open.
@@ -298,7 +405,7 @@ export default function App() {
     if (!path.trim()) return;
     setConnectError(undefined);
     try {
-      const { sessionId: id, history, usage: initialUsage, todos: initialTodos, roots: initialRoots } = await client.init(path, resumeId);
+      const { sessionId: id, history, usage: initialUsage, todos: initialTodos, roots: initialRoots, model } = await client.init(path, resumeId);
       unsubscribeRef.current?.();
       unsubscribeRef.current = await client.subscribe(id, handleEvent);
       setSessionId(id);
@@ -307,6 +414,7 @@ export default function App() {
       setUsage(initialUsage ?? ZERO_USAGE);
       setTodos(initialTodos ?? []);
       setRoots(initialRoots ?? []);
+      setCurrentModel(model ?? null);
       setGroupOverrides({});
       setView("chat");
       client.listSessions().then((r) => setSessions(r.sessions)).catch(() => {});
@@ -461,6 +569,19 @@ export default function App() {
     } catch (err) {
       setMessages((prev) => [...prev, { role: "system", text: `Error: ${(err as Error).message}` }]);
       setStreaming(false);
+    }
+  }
+
+  async function switchModel(provider: string, modelId: string) {
+    if (!sessionId) return;
+    const previous = currentModel;
+    setCurrentModel({ provider, modelId }); // optimistic — the picker should feel instant
+    try {
+      const { model } = await client.setSessionModel(sessionId, provider, modelId);
+      setCurrentModel(model);
+    } catch (err) {
+      setCurrentModel(previous);
+      setMessages((prev) => [...prev, { role: "system", text: `Couldn't switch model: ${(err as Error).message}` }]);
     }
   }
 
@@ -857,20 +978,32 @@ export default function App() {
             </div>
             <div className="composer-wrap">
               <div className="composer">
-                <input
+                <textarea
+                  ref={textareaRef}
+                  className="composer-textarea"
+                  rows={1}
                   placeholder={streaming ? "Steer the running turn…" : "Message MetaHarn…"}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && send()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                    }
+                  }}
                 />
-                {streaming && (
-                  <button className="btn-stop" onClick={() => sessionId && client.abort(sessionId)}>
-                    Stop
+                <div className="composer-toolbar">
+                  <ModelPicker current={currentModel} providers={providers} onSelect={switchModel} onOpen={refreshProviders} />
+                  <div className="composer-toolbar-spacer" />
+                  {streaming && (
+                    <button className="btn-stop" onClick={() => sessionId && client.abort(sessionId)}>
+                      Stop
+                    </button>
+                  )}
+                  <button className="btn-send" disabled={!input.trim()} onClick={send}>
+                    <IconSend />
                   </button>
-                )}
-                <button className="btn-send" disabled={!input.trim()} onClick={send}>
-                  <IconSend />
-                </button>
+                </div>
               </div>
             </div>
           </div>

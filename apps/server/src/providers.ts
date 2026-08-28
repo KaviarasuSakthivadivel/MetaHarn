@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { SecretStore } from "@metaharn/engine/src/trust/secretStore.js";
 import { disableTelemetry, enableTelemetry } from "@metaharn/engine/src/telemetry.js";
+import { CodexTokenStore } from "@metaharn/engine/src/providers/codexAuth.js";
 import { statePath } from "./state.js";
 import { ensureTelemetryStackRunning, isSelfHostedEndpoint } from "./telemetryDocker.js";
 
@@ -25,12 +26,17 @@ export interface ProviderCatalogEntry {
    * OpenAIProvider(apiKey, {baseURL}) path every vendor below defaults to); "anthropic" is
    * handled by its own `name === "anthropic"` check rather than this field, unchanged from
    * before this catalog grew a `kind`. */
-  kind?: "gemini" | "bedrock";
+  kind?: "gemini" | "bedrock" | "openai-codex";
+  /** "oauth" → the Settings detail page shows a Sign in/Sign out control instead of an API
+   * key field (only "openai-codex" today). Omitted means the ordinary key-field form. */
+  auth?: "oauth";
 }
 
-// Every entry except "anthropic"/"gemini"/"bedrock" speaks the OpenAI Chat Completions wire
-// shape — see session.ts's buildProviderClient(), which routes all of them through the same
-// OpenAIProvider(apiKey, {baseURL}) constructor Ollama already proved out. Base URLs are each
+// Every entry except "anthropic"/"gemini"/"bedrock"/"openai-codex" speaks the OpenAI Chat
+// Completions wire shape — see session.ts's buildProviderClient(), which routes all of them
+// through the same OpenAIProvider(apiKey, {baseURL}) constructor Ollama already proved out.
+// "openai-codex" (ChatGPT subscription — OAuth, no key) instead speaks the Responses wire via
+// CodexProvider; see @metaharn/engine/src/providers/codex.ts. Base URLs are each
 // vendor's own documented OpenAI-compatible endpoint (not guessed): DeepSeek, Groq, Mistral,
 // Fireworks, Together, OpenRouter, xAI, Z AI, Moonshot (Kimi), MiniMax, Alibaba (Qwen), and
 // Meta all publish one specifically for drop-in use with the OpenAI SDK — matching the vendor
@@ -40,6 +46,13 @@ export interface ProviderCatalogEntry {
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   { name: "anthropic", displayName: "Claude (Anthropic)", noKeyNeeded: false, envVar: "ANTHROPIC_API_KEY" },
   { name: "openai", displayName: "OpenAI", noKeyNeeded: false, envVar: "OPENAI_API_KEY" },
+  {
+    name: "openai-codex",
+    displayName: "ChatGPT subscription",
+    noKeyNeeded: false,
+    kind: "openai-codex",
+    auth: "oauth",
+  },
   { name: "gemini", displayName: "Gemini (Google)", noKeyNeeded: false, envVar: "GEMINI_API_KEY", kind: "gemini" },
   { name: "bedrock", displayName: "AWS Bedrock", noKeyNeeded: false, kind: "bedrock" },
   { name: "ollama", displayName: "Ollama (local)", noKeyNeeded: true, defaultBaseUrl: "http://localhost:11434/v1" },
@@ -61,6 +74,13 @@ let store: SecretStore | undefined;
 function secretStore(): SecretStore {
   if (!store) store = new SecretStore(statePath("secrets.json"));
   return store;
+}
+
+/** The shared SecretStore instance, for callers outside this file that need to build their
+ * own credential wrapper around it directly (codexAuthApi.ts's sign-in flow, session.ts's
+ * CodexProvider construction) rather than going through one of this file's own accessors. */
+export function providerSecretStore(): SecretStore {
+  return secretStore();
 }
 
 /** A provider's saved fields — {apiKey, baseUrl} for the openai-compat majority, or the
@@ -99,7 +119,9 @@ export function listProviders(): ProviderStatus[] {
     const hasKey =
       entry.kind === "bedrock"
         ? bedrockConfigured(profile)
-        : Boolean(profile?.apiKey) || Boolean(entry.envVar && process.env[entry.envVar]);
+        : entry.kind === "openai-codex"
+          ? new CodexTokenStore(secretStore()).signedIn()
+          : Boolean(profile?.apiKey) || Boolean(entry.envVar && process.env[entry.envVar]);
     return {
       ...entry,
       configured: entry.noKeyNeeded ? true : hasKey,

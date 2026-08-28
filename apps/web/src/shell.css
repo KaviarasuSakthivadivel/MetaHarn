@@ -1149,28 +1149,41 @@
   max-width: 900px;
   margin: 0 auto;
   display: flex;
-  align-items: flex-end;
-  gap: 10px;
+  flex-direction: column;
   background: var(--paper-dim);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  padding: 8px 8px 8px 18px;
+  padding: 14px 12px 10px 18px;
 }
 
-.composer input {
-  flex: 1;
-  min-width: 0;
+.composer-textarea {
   border: none;
   background: transparent;
   font-size: 15px;
-  padding: 10px 0;
+  font-family: inherit;
+  line-height: 1.45;
   color: var(--text);
+  resize: none;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 0 6px 0 0;
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.composer-toolbar-spacer {
+  flex: 1;
 }
 
 .btn-send {
   flex: none;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 999px;
   border: none;
   background: var(--accent);
@@ -1188,7 +1201,7 @@
 
 .btn-stop {
   flex: none;
-  height: 40px;
+  height: 36px;
   padding: 0 16px;
   border-radius: 999px;
   border: 1px solid var(--bad);
@@ -1197,6 +1210,121 @@
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
+}
+
+/* ---------- Composer model picker ---------- */
+
+.model-picker {
+  position: relative;
+  flex: none;
+}
+
+.model-picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.model-picker-trigger:hover {
+  border-color: var(--line-strong);
+}
+
+.model-picker-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.model-picker-icon svg,
+.model-picker-icon .provider-icon-svg {
+  width: 16px;
+  height: 16px;
+}
+
+.model-picker-label {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 260px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+  padding: 8px;
+  z-index: 40;
+}
+
+.model-picker-empty {
+  padding: 10px 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.model-picker-group + .model-picker-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.model-picker-group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.model-picker-group-label svg,
+.model-picker-group-label .provider-icon-svg {
+  width: 13px;
+  height: 13px;
+}
+
+.model-picker-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 7px 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.model-picker-option:hover {
+  background: var(--paper-dim-2);
+}
+
+.model-picker-option.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
 }
 
 /* ---------- Permission dialog ---------- */
@@ -1725,6 +1853,57 @@
   font-size: 12px;
   color: var(--text-muted);
   margin-top: 10px;
+}
+
+/* ---------- ChatGPT-subscription sign-in (OAuth) ---------- */
+
+.codex-signin-panel {
+  margin-top: 20px;
+  max-width: 640px;
+}
+
+.codex-signedin-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--good-soft);
+  border: 1px solid var(--good);
+  border-radius: var(--radius-sm);
+  padding: 13px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #0f7a4f;
+}
+
+.codex-signin-note {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.codex-signin-authorizing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.codex-signin-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  animation: codex-spin 0.7s linear infinite;
+}
+
+@keyframes codex-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ---------- Models: bold provider grid + dedicated detail page ---------- */

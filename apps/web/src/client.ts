@@ -60,8 +60,10 @@ export interface ProviderStatus {
   noKeyNeeded: boolean;
   configured: boolean;
   baseUrl?: string;
-  /** Present only for providers with a dispatch-specific client (currently "gemini"/"bedrock") — see apps/server/src/providers.ts's ProviderCatalogEntry. */
-  kind?: "gemini" | "bedrock";
+  /** Present only for providers with a dispatch-specific client (currently "gemini"/"bedrock"/"openai-codex") — see apps/server/src/providers.ts's ProviderCatalogEntry. */
+  kind?: "gemini" | "bedrock" | "openai-codex";
+  /** "oauth" → Settings shows a Sign in/Sign out control instead of an API key field. */
+  auth?: "oauth";
   /** Whether enabling telemetry actually traces this provider — false only for "bedrock". */
   telemetryCovered: boolean;
 }
@@ -175,11 +177,22 @@ export function listSessions(): Promise<{ sessions: SessionListItem[] }> {
   return request("/v1/sessions");
 }
 
+export interface SessionModel {
+  provider: string;
+  modelId: string;
+}
+
 export function init(
   repoPath: string,
   resumeSessionId?: string,
-): Promise<{ sessionId: string; history: HistoryMessage[]; usage: TokenUsage; todos: TodoItem[]; roots: RootDir[] }> {
+): Promise<{ sessionId: string; history: HistoryMessage[]; usage: TokenUsage; todos: TodoItem[]; roots: RootDir[]; model: SessionModel }> {
   return request("/v1/init", { method: "POST", body: JSON.stringify({ repoPath, resumeSessionId }) });
+}
+
+/** Rebinds the session's active model — takes effect on the next turn; past turns are
+ * untouched (history is provider-agnostic). Persists, so it survives a reconnect. */
+export function setSessionModel(sessionId: string, provider: string, modelId: string): Promise<{ ok: boolean; model: SessionModel }> {
+  return request(`/v1/sessions/${sessionId}/model`, { method: "PUT", body: JSON.stringify({ provider, modelId }) });
 }
 
 export function prompt(sessionId: string, text: string): Promise<void> {
@@ -278,6 +291,30 @@ export function setProvider(name: string, input: Record<string, string | undefin
 
 export function deleteProviderKey(name: string): Promise<void> {
   return request(`/v1/providers/${name}`, { method: "DELETE" });
+}
+
+// -- ChatGPT-subscription sign-in (OAuth, no key) -------------------------------------------
+
+export interface CodexAuthStatus {
+  signedIn: boolean;
+  account?: string;
+  authorizing: boolean;
+  lastError?: string;
+  authorizeUrl?: string;
+}
+
+/** Kicks off the interactive browser sign-in; the flow itself runs server-side in the
+ * background. Callers poll codexAuthStatus() for the result. */
+export function beginCodexSignIn(): Promise<{ ok: boolean }> {
+  return request("/v1/providers/openai-codex/signin", { method: "POST" });
+}
+
+export function codexAuthStatus(): Promise<CodexAuthStatus> {
+  return request("/v1/providers/openai-codex/status");
+}
+
+export function codexSignOut(): Promise<{ ok: boolean; hadTokens: boolean }> {
+  return request("/v1/providers/openai-codex/signout", { method: "POST" });
 }
 
 export function setDefaultModel(provider: string, modelId: string): Promise<void> {

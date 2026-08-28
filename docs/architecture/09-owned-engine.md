@@ -1148,6 +1148,123 @@ casually. Kept around for reference (it's the actual upstream source for the mer
 definitions) rather than deleted, since removing someone's cloned repo isn't this workstream's call
 to make unprompted.
 
+### ChatGPT-subscription provider — OAuth sign-in instead of an API key
+
+Requested directly from a screenshot of OpenWorker's own "ChatGPT subscription" settings page
+("Sign in with your ChatGPT plan... no API key"). Ported from OpenWorker's actual working
+implementation (`coworker/providers/{codex_auth,codex_provider,openai_responses}.py`) rather
+than reconstructed from OpenAI's public docs — this flow isn't documented publicly at all; it's
+Codex CLI's own mechanism, and the client id, endpoints, and header set only exist as verified
+working code, not as something safe to guess at.
+
+**The auth flow (`@metaharn/engine/src/providers/codexAuth.ts`)**: standard OAuth 2.0 + PKCE
+against `auth.openai.com`, using Codex CLI's own public subscription client id (not a secret —
+ships in every copy of that tool) and its registered loopback redirect, `localhost:1455/auth/
+callback` — the port is fixed; the redirect-uri check is server-side and any other port fails
+it. `signIn()` binds that port with a plain `node:http` server, opens the user's browser
+(best-effort per-platform spawn — `open`/`start`/`xdg-open`, matching `pickNativeFolder()`'s own
+approach in index.ts), and resolves once the redirect lands with a matching `state` (constant-
+time compared, same loopback-gate reasoning as any local OAuth callback). Tokens land in the
+SecretStore profile `provider:openai-codex` — the same `provider:${name}` convention every
+other provider's saved credential uses, so `listProviders()`'s existing profile-lookup plumbing
+picks this provider up for free; it just checks `tokens` instead of `apiKey`. `accessToken()`
+refreshes proactively near the JWT's own `exp` claim (decoded without verification — only used
+for routing, the backend verifies the signature) and clears the profile to a clean signed-out
+state if a refresh token is ever rejected, rather than looping.
+
+**Wire format — a second provider, not a variant of the first**: the ChatGPT-subscription
+backend (`chatgpt.com/backend-api/codex`) only speaks OpenAI's Responses API, which
+`openai.ts` (Chat Completions) doesn't touch at all. `openaiResponses.ts` is a full second
+provider ported from `openai_responses.py` — its own message/tool converters, its own
+streaming-event handling, its own reasoning-continuity sidecar (`_openaiResponses` on the
+canonical assistant message, via `AssistantTurn.extras` — the same mechanism gemini.ts already
+uses for Gemini 3's thought signatures, just a different sidecar key). `codex.ts`'s
+`CodexProvider` subclasses it and overrides exactly one seam — `ensureClient()` — to fetch a
+live bearer per call and rebuild the SDK client when the token has rotated; everything else
+(request shaping, response parsing, streaming) is inherited untouched. Two behaviors this
+backend needs that stock Responses doesn't: it 400s on `max_output_tokens`/`temperature`/
+`top_p` (stripped in `CodexProvider.requestKwargs()`) and it only ever serves streamed
+responses, so `complete()` is overridden to drain `stream()` rather than calling the
+non-streaming path at all.
+
+**Verified against the real backend, not just type-checked**: `POST /v1/providers/openai-codex/
+signin` was exercised live — the server bound `127.0.0.1:1455`, and `GET .../status` correctly
+returned `authorizing: true` with a real, correctly-formed `auth.openai.com` authorize URL
+(right client id, PKCE challenge, state, `codex_cli_simplified_flow=true`, `originator=
+metaharn`). Completing the flow needs a real ChatGPT login, which is the user's own credential
+to provide — not something to simulate here.
+
+**Telemetry coverage, checked rather than assumed** (same bar this app's telemetry integration
+was held to for Bedrock): Laminar's OpenAI instrumentation DOES patch `Responses.prototype.
+create` (confirmed directly in `@traceloop/instrumentation-openai`'s compiled output), so
+`telemetryCovered` is `true` for this provider — but that same source shows streamed Responses
+calls only get a request-attributes span, not the response/usage a non-streaming call would
+capture, and this provider streams exclusively. Traces exist and group correctly; they just
+carry less than a Chat Completions trace would. Documented in `codex.ts`'s own module doc so
+this doesn't need rediscovering later.
+
+**Settings UI**: the provider catalog's `auth: "oauth"` field (new; every other provider is
+implicitly `"key"`) switches `ProviderDetailPage` from the ordinary API-key form to
+`CodexSignInFields` — a "Sign in with ChatGPT" button, a spinner state with a manual "click
+here" fallback link (`authorizeUrl` from status, for when the auto-opened tab gets lost, same
+affordance OpenWorker's own GUI offers), and once signed in, the green "✓ Signed in as
+{email}" bar with Sign out from the reference screenshot. Reuses the Models tab's existing
+"Included models" list (`PROVIDER_MODELS["openai-codex"]`) rather than building the reference
+screenshot's separate tick-box/default-badge picker — that's a different, provider-wide UI
+pattern MetaHarn doesn't have for ANY provider yet (see the composer model-picker work below),
+and duplicating it for just this one provider would leave every other provider's page
+inconsistent with it. Model ids ported verbatim from OpenWorker's own curated list
+(`coworker/providers/matrix.py`) — Sol/Terra/Luna 5.6 tiers, 5.2/5.2-codex, 5.1-codex/mini.
+
+### Composer model picker and a proper multi-line chat box
+
+Requested directly: pick a model per chat from the composer itself, filtered to only the
+providers actually configured, plus a general "revamp the chat box" pass on the composer's UI.
+
+**The engine already had the seam this needed** — `Engine.switchModel(model)` (packages/engine/
+src/engine.ts) existed already ("rebind the model mid-conversation... history is canonical and
+provider-agnostic") but nothing in either server surface called it; every session was pinned to
+the global default model for its whole life. `ProviderRouter` (providers/router.ts) already
+dispatches per-request by a model string's `provider:` prefix too — none of the actual routing
+machinery was new, only wiring a live control up to it.
+
+**Server-side**: `SessionRecord` gained an optional `model` field (`provider:modelId`, the
+exact string `Engine.model`/`switchModel()` already use) — absent means "still on whatever the
+global default was at creation," unchanged behavior. `ServerSession` gained `currentModel`
+(getter, split back into `{provider, modelId}`) and `setModel(provider, modelId)`, which calls
+`engine.switchModel()` AND persists immediately, so a mid-chat switch survives a reconnect
+rather than reverting to the global default. The session constructor's context-window lookup
+(`CONTEXT_WINDOW_BY_PROVIDER[...]`) now keys off the session's OWN active provider, not always
+the global default — a real bug this would otherwise have reintroduced the moment a resumed
+session's saved model came from a different provider than whatever the global default currently
+is. New route: `PUT /v1/sessions/:id/model`; `POST /v1/init`'s response gained `model` so the
+composer knows what's selected the moment a session connects, no separate fetch.
+
+**Composer UI**: the single-line `<input>` became an auto-growing `<textarea>` (Enter sends,
+Shift+Enter for a newline — the standard chat convention this app didn't have before), with a
+toolbar row underneath holding the new `ModelPicker` and the existing Send/Stop controls,
+instead of everything crammed into one row. `ModelPicker` calls `listProviders()` — re-fetched
+on every open, not just on mount, so adding a key in Settings and coming straight back to the
+composer shows it immediately — and filters to `configured` providers only, grouped by
+provider with each one's `PROVIDER_MODELS` curated list underneath, the current selection
+highlighted. Picking a model calls the new `PUT .../model` route with an optimistic update
+(rolled back on error).
+
+**One reusable extraction, not a duplicated catalog**: `PROVIDER_MODELS`/`PROVIDER_DESCRIPTIONS`/
+`ProviderIcon`/the vendor SVG imports moved out of Settings.tsx into a new `providerCatalog.tsx`
+— both Settings' provider detail pages and the composer's picker now read the exact same
+curated model list and render the exact same icons, rather than the composer growing its own
+copy that would drift from Settings' the first time either one changed.
+
+**Verified live via CDP**, not just type-checked: connected a session, opened the picker and
+confirmed it listed exactly the configured providers (Claude, ChatGPT subscription — see the
+OAuth section above; a real account was signed in during this same session — and Ollama, always
+configured) grouped with icons and the active model highlighted; typed a multi-line message and
+confirmed the textarea grows and caps correctly; picked "Claude Sonnet 5" from a session that
+started on a different provider's model and confirmed both the picker's own label AND the
+on-disk session record (`model: "anthropic:claude-sonnet-5"`) updated — the full path from click
+to persisted state, not just the UI layer.
+
 ## Known gaps specific to this workstream
 
 See [`08-known-limitations.md`](08-known-limitations.md) for the full, itemized list (provider
