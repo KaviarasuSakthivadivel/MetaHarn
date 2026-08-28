@@ -978,6 +978,107 @@ click through it: CDP can drive the browser DOM, not a native OS dialog outside 
 entirely, and triggering one unprompted would leave a real, blocking system dialog on the
 user's screen with no programmatic way to dismiss it. Left for the user to try.
 
+### Telemetry — Laminar tracing, self-hosted by default
+
+Requested directly ("add Laminar for the existing providers; mention unsupported ones in
+Settings"), then narrowed to self-hosted-by-default with cloud/custom as switchable options.
+[Laminar](https://laminar.sh) is an OpenTelemetry-native observability platform for AI
+agents — its own `@lmnr-ai/lmnr` TS SDK auto-instruments the LLM provider SDKs a process
+imports, by monkey-patching each one's prototype at `Laminar.initialize()` time.
+
+**Why this needed almost no provider-side code**: `packages/engine/src/providers/anthropic.ts`,
+`openai.ts`, and `gemini.ts` already import `@anthropic-ai/sdk`, `openai`, and `@google/genai`
+directly — the exact three SDKs Laminar ships first-class instrumentation for. Patching happens
+once, at the module level, in a new `packages/engine/src/telemetry.ts`; every provider built on
+one of those three SDKs is traced automatically the moment telemetry turns on, with zero changes
+to any provider file.
+
+**Getting `instrumentModules`'s shape right needed reading Laminar's actual compiled output, not
+its docs** — the docs' own top-level example (`anthropic: Anthropic`, the bare class) doesn't
+match what `@traceloop/instrumentation-anthropic`'s `manuallyInstrument()` actually reads
+(`module.Anthropic.Messages.prototype` — the whole module NAMESPACE, since the bare class has no
+`.Anthropic` property of its own). Verified directly in Node before writing any code: `import *
+as AnthropicModule from "@anthropic-ai/sdk"` is what actually has `.Anthropic.Messages.prototype`
+populated; the class alone doesn't. OpenAI's case is the opposite — the class itself already
+carries `.Chat.Completions` as a static property, so the docs' `{ OpenAI }` form is correct there.
+Gemini needed the same verification treatment: reading `@lmnr-ai/lmnr`'s bundled source directly
+turned up `instrumentModules.google_genai` (snake_case, undocumented in what was fetched) wired
+to a real `GoogleGenAiInstrumentation` that patches `GoogleGenAI.prototype.models` — meaning
+Gemini IS coverable, contrary to the first-pass assumption that only OpenAI/Anthropic were.
+
+**AWS Bedrock genuinely isn't coverable, and this was checked, not assumed**: Laminar does ship
+`@traceloop/instrumentation-bedrock`, but reading its source confirmed it patches
+`@aws-sdk/client-bedrock-runtime`'s own client class — `providers/bedrock.ts` uses
+`@anthropic-ai/bedrock-sdk`'s `AnthropicBedrock` instead (Anthropic's own native-Bedrock client,
+chosen when Bedrock support was built, for the same converters-reuse reason documented in that
+provider's own module doc), which never touches the AWS SDK class Laminar's instrumentation
+targets. `ProviderStatus.telemetryCovered` (`apps/server/src/providers.ts`) is computed as `kind
+!== "bedrock"` — a real predicate over the actual catalog, not a hardcoded list that could drift
+from it — and the Settings page's Telemetry card surfaces exactly which provider(s) that
+excludes, by name, rather than a blanket disclaimer.
+
+**Self-hosted by default**: rather than defaulting to Laminar Cloud, `getTelemetryEndpoint()`
+defaults to `http://localhost` with ports `8000`/`8001` — `@lmnr-ai/lmnr`'s own self-hosted
+convention (`docker compose up -d` from `github.com/lmnr-ai/lmnr`; verified against that repo's
+real `docker-compose.yml`, which exposes `8000`/`8001` for HTTP/gRPC ingestion and a *separate*
+`5667` for its web dashboard — a real, easy mistake to make is pointing the SDK at the dashboard
+port instead of the ingestion one). A self-hosted instance was actually cloned and started in
+this environment (`opensource/lmnr`, `docker compose up -d`) to verify the setup is real, not
+just documented — all 5 containers (postgres, clickhouse, quickwit, app-server, frontend) came up
+healthy, and the dashboard answered on `:5667` with a real `/sign-in` redirect. Settings still
+offers Laminar Cloud and a fully custom endpoint (`TelemetryEndpoint`'s three raw fields —
+`baseUrl`/`httpPort`/`grpcPort` — the actual SDK parameters, not a derived/parsed single URL, to
+avoid guessing wrong for a nonstandard self-hosted setup) as one-click presets or free-form entry.
+
+**Server-side**: `providers.ts` gained the settings.json + SecretStore-backed
+`getTelemetryEnabled`/`getTelemetryApiKey`/`getTelemetryEndpoint` trio (same layering as every
+other setting in this file — saved value first, `LMNR_PROJECT_API_KEY` env var fallback for the
+key) and `setTelemetryEnabled()`, which applies live: `Laminar.initialize()`/`Laminar.shutdown()`
+immediately, no server restart needed to toggle tracing on or off mid-session — confirmed
+against Laminar's own TS lifecycle docs that unlike its Python SDK, initialize → shutdown →
+initialize is a supported cycle. `initTelemetryFromSettings()` re-applies a previously-enabled
+setting at server boot, before any provider can be constructed. `PUT /v1/settings/telemetry`
+accepts any subset of `{enabled, apiKey, baseUrl, httpPort, grpcPort}` in one call.
+
+**Web UI**: a dedicated `TelemetryCard` (`Settings.tsx`, General tab) — a status pill, the
+endpoint as three preset tabs (Self-hosted/Laminar Cloud/Custom, reusing the `.method-tabs`
+component built for Bedrock's auth-method picker) with a live "Open dashboard" link per preset,
+the API key field, and the not-traced-providers note as its own callout rather than folded into
+a paragraph. Replaced an initial version that crammed all of this into the same generic
+`.toggle-row` every other boolean setting on the page uses — that pattern doesn't scale to a
+setting with an endpoint choice and a credential, so this one earned its own card instead.
+
+Verified live via CDP: toggling with no key configured produces the exact thrown error ("No
+Laminar API key configured…"); saving a key and re-toggling succeeds and is reflected correctly
+on a fresh page load (not just optimistic client state); all three endpoint tabs switch correctly
+with the right resolved URL and dashboard link each; `Laminar.shutdown()` completes without error
+when disabling.
+
+**The self-hosted instance was actually stood up and used, not just plumbed** —
+`opensource/lmnr` was cloned and started with `docker compose up -d` in this environment (all 5
+containers healthy, dashboard answering on `:5667`); the docker-compose.yml also gained
+`restart: unless-stopped` on every service (absent by default — the stack would otherwise not
+survive a reboot or a Docker Desktop restart, which came up as a real follow-up question, not a
+speculative concern). A real project was created through that dashboard, a real API key saved
+into MetaHarn's Settings, and a real prompt sent through the chat.
+
+**That real test surfaced a genuine bug this whole feature had shipped with**: one prompt that
+triggered a `web_search` tool-use round-trip (two sequential LLM calls — one that emits the tool
+call, one that consumes its result) produced *three* separate, unrelated top-level traces in
+Laminar's dashboard instead of one. Root cause: `instrumentModules`'s auto-instrumentation traces
+each individual LLM call correctly, but nothing established a shared parent span across the
+calls one turn makes — OpenTelemetry has no way to know three sequential calls belong together
+without one. Fixed with `telemetry.ts`'s new `traceTurn(sessionId, fn)`, wrapping
+`ServerSession`'s `drive()` — the method that fully consumes one turn's event generator,
+including every LLM call and tool round-trip inside it — in a single `observe({name:
+"agent_turn", sessionId}, fn)` call. This also directly answers a real question asked while
+building it ("should the session id be stored too?"): yes, exactly what `sessionId` does here —
+every turn in one MetaHarn chat now groups under one Laminar session, not just one trace per
+turn. Re-verified after the fix with the identical prompt (real session, real self-hosted
+instance, no errors in the server log across the full run) — the fix path itself was exercised
+live; confirming the trace count actually dropped to one in the dashboard is the one piece left
+for the user to eyeball, since that's Laminar's own UI, not something this environment queries.
+
 ## Known gaps specific to this workstream
 
 See [`08-known-limitations.md`](08-known-limitations.md) for the full, itemized list (provider
