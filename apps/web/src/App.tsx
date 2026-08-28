@@ -166,6 +166,26 @@ function IconPlus() {
   );
 }
 
+function IconPencil() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconTrash() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 6h18" strokeLinecap="round" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <line x1="10" y1="11" x2="10" y2="17" strokeLinecap="round" />
+      <line x1="14" y1="11" x2="14" y2="17" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function App() {
   const [connectError, setConnectError] = useState<string | undefined>();
   const [repoPath, setRepoPath] = useState("");
@@ -181,6 +201,9 @@ export default function App() {
   const [view, setView] = useState<View>("landing");
   const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
   const [nativePicker, setNativePicker] = useState(false);
+  const [pickerBusy, setPickerBusy] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [usage, setUsage] = useState<TokenUsage>(ZERO_USAGE);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [canvasPayload, setCanvasPayload] = useState<CanvasPayload | null>(null);
@@ -323,8 +346,23 @@ export default function App() {
   }
 
   async function browse() {
-    const picked = await pickFolder(repoPath || undefined);
-    if (picked) setRepoPath(picked);
+    if (nativePicker) {
+      const picked = await pickFolder(repoPath || undefined);
+      if (picked) setRepoPath(picked);
+      return;
+    }
+    // Plain browser tab: still a real OS dialog, just opened server-side (the server runs
+    // locally and can shell out to osascript/PowerShell/zenity) rather than Tauri's own.
+    setPickerBusy(true);
+    try {
+      const result = await client.pickFolderNative();
+      if (result.ok) setRepoPath(result.path);
+      else if (result.error) setConnectError(`Couldn't open a folder picker: ${result.error} — paste a path instead.`);
+    } catch (err) {
+      setConnectError(`Couldn't open a folder picker: ${(err as Error).message}`);
+    } finally {
+      setPickerBusy(false);
+    }
   }
 
   function startNewSession() {
@@ -334,6 +372,39 @@ export default function App() {
     setConnectError(undefined);
     setUsage(ZERO_USAGE);
     setView("landing");
+  }
+
+  function startRename(s: SessionListItem) {
+    setRenamingId(s.id);
+    setRenameDraft(s.name);
+  }
+
+  async function commitRename(id: string) {
+    const title = renameDraft.trim();
+    setRenamingId(null);
+    if (!title) return;
+    const prev = sessions.find((s) => s.id === id);
+    if (!prev || prev.name === title) return;
+    setSessions((cur) => cur.map((s) => (s.id === id ? { ...s, name: title } : s)));
+    try {
+      await client.renameSession(id, title);
+    } catch (err) {
+      setSessions((cur) => cur.map((s) => (s.id === id ? { ...s, name: prev.name } : s)));
+      setMessages((prevMsgs) => [...prevMsgs, { role: "system", text: `Couldn't rename session: ${(err as Error).message}` }]);
+    }
+  }
+
+  async function deleteSessionById(s: SessionListItem) {
+    if (!window.confirm(`Delete "${s.name}"? This can't be undone.`)) return;
+    setSessions((cur) => cur.filter((x) => x.id !== s.id));
+    try {
+      await client.deleteSession(s.id);
+    } catch (err) {
+      client.listSessions().then((r) => setSessions(r.sessions)).catch(() => {});
+      setMessages((prev) => [...prev, { role: "system", text: `Couldn't delete session: ${(err as Error).message}` }]);
+      return;
+    }
+    if (s.id === sessionId) startNewSession();
   }
 
   async function forkCurrentSession() {
@@ -406,6 +477,22 @@ export default function App() {
     if (!q) return sessions;
     return sessions.filter((s) => s.name.toLowerCase().includes(q) || s.cwd.toLowerCase().includes(q));
   }, [sessions, search]);
+
+  // One group per workspace (cwd), in the order its most-recently-active session appears in
+  // filteredSessions — which is already server-sorted newest-first, so this is "most recently
+  // used project" ordering for free, not a separate sort.
+  const groupedSessions = useMemo(() => {
+    const order: string[] = [];
+    const byCwd = new Map<string, SessionListItem[]>();
+    for (const s of filteredSessions) {
+      if (!byCwd.has(s.cwd)) {
+        byCwd.set(s.cwd, []);
+        order.push(s.cwd);
+      }
+      byCwd.get(s.cwd)!.push(s);
+    }
+    return order.map((cwd) => ({ cwd, sessions: byCwd.get(cwd)! }));
+  }, [filteredSessions]);
 
   // A plain browser tab can't get a real absolute path out of a native OS picker (the File
   // System Access API only hands back a sandboxed handle, never a path a separate local server
@@ -602,16 +689,54 @@ export default function App() {
         <div className="sidebar-section-label">Recent</div>
         <div className="sidebar-sessions">
           {filteredSessions.length === 0 && <div className="sidebar-empty">No sessions yet — point MetaHarn at a repo to start one.</div>}
-          {filteredSessions.map((s) => {
-            const parent = s.parentId ? sessions.find((p) => p.id === s.parentId) : undefined;
-            return (
-              <div key={s.id} className={`sidebar-session-card${s.id === sessionId ? " active" : ""}`} onClick={() => connect(s.cwd, s.id)}>
-                <div className="sidebar-session-name">{s.name}</div>
-                <div className="sidebar-session-meta">{basename(s.cwd)}</div>
-                {s.parentId && <div className="sidebar-session-fork">↳ forked from {parent?.name ?? "a session"}</div>}
+          {groupedSessions.map((group) => (
+            <div className="sidebar-group" key={group.cwd}>
+              <div className="sidebar-group-label" title={group.cwd}>
+                <IconFolder /> {basename(group.cwd)}
               </div>
-            );
-          })}
+              {group.sessions.map((s) => {
+                const parent = s.parentId ? sessions.find((p) => p.id === s.parentId) : undefined;
+                const renaming = renamingId === s.id;
+                return (
+                  <div
+                    key={s.id}
+                    className={`sidebar-session-card${s.id === sessionId ? " active" : ""}`}
+                    onClick={() => !renaming && connect(s.cwd, s.id)}
+                    onDoubleClick={() => startRename(s)}
+                  >
+                    <div className="sidebar-session-row">
+                      {renaming ? (
+                        <input
+                          className="sidebar-session-rename-input"
+                          autoFocus
+                          value={renameDraft}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitRename(s.id);
+                            if (e.key === "Escape") setRenamingId(null);
+                          }}
+                          onBlur={() => commitRename(s.id)}
+                        />
+                      ) : (
+                        <div className="sidebar-session-name">{s.name}</div>
+                      )}
+                      <div className="sidebar-session-actions">
+                        <button className="sidebar-session-icon-btn" title="Rename" aria-label="Rename" onClick={(e) => { e.stopPropagation(); startRename(s); }}>
+                          <IconPencil />
+                        </button>
+                        <button className="sidebar-session-icon-btn danger" title="Delete" aria-label="Delete" onClick={(e) => { e.stopPropagation(); void deleteSessionById(s); }}>
+                          <IconTrash />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="sidebar-session-meta">{relativeTime(s.modified)} · {s.messageCount} msg{s.messageCount === 1 ? "" : "s"}</div>
+                    {s.parentId && <div className="sidebar-session-fork">↳ forked from {parent?.name ?? "a session"}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
         </div>
       </aside>
 
@@ -632,11 +757,9 @@ export default function App() {
                     onChange={(e) => setRepoPath(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && connect(repoPath)}
                   />
-                  {nativePicker && (
-                    <button className="btn-browse" onClick={browse}>
-                      <IconFolder /> Browse
-                    </button>
-                  )}
+                  <button className="btn-browse" onClick={browse} disabled={pickerBusy}>
+                    <IconFolder /> {pickerBusy ? "Waiting for picker…" : "Browse"}
+                  </button>
                 </div>
                 <div className="path-actions">
                   <button className="btn-primary accent" onClick={() => connect(repoPath)}>
@@ -645,7 +768,7 @@ export default function App() {
                 </div>
               </div>
               {connectError && <div className="error-banner">{connectError}</div>}
-              {!nativePicker && <div className="landing-hint">Running in a browser tab — paste an absolute path above. The Tauri app adds a native folder picker.</div>}
+              {!nativePicker && <div className="landing-hint">Running in a browser tab — Browse opens the OS folder dialog through the local server; paste an absolute path works too.</div>}
               {recentFolders.length > 0 && (
                 <div className="recent-folders">
                   <div className="recent-folders-label">Recent</div>

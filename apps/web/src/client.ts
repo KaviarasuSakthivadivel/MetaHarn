@@ -225,6 +225,24 @@ export function branchSession(sessionId: string, messageIndex: number): Promise<
   return request(`/v1/sessions/${sessionId}/branch`, { method: "POST", body: JSON.stringify({ messageIndex }) });
 }
 
+export function renameSession(sessionId: string, title: string): Promise<void> {
+  return request(`/v1/sessions/${sessionId}/rename`, { method: "PUT", body: JSON.stringify({ title }) });
+}
+
+export function deleteSession(sessionId: string): Promise<void> {
+  return request(`/v1/sessions/${sessionId}`, { method: "DELETE" });
+}
+
+export type FolderPickResult = { ok: true; path: string } | { ok: false; canceled?: boolean; error?: string };
+
+/** Opens the REAL OS folder picker from the local server — works even in a plain browser tab,
+ * since the server runs locally and can shell out to the platform's native dialog (osascript/
+ * PowerShell/zenity). See apps/server/src/index.ts's pickNativeFolder() for the full story;
+ * ported from OpenWorker's own sidecar-opened-dialog approach. */
+export function pickFolderNative(): Promise<FolderPickResult> {
+  return request("/v1/fs/pick", { method: "POST" });
+}
+
 export function resolvePermission(sessionId: string, toolCallId: string, outcome: ApprovalOutcome): Promise<void> {
   return request(`/v1/sessions/${sessionId}/resolvePermission`, { method: "POST", body: JSON.stringify({ toolCallId, outcome }) });
 }

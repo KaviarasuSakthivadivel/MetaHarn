@@ -11,20 +11,24 @@
  * OpenWorker accepts it there too).
  */
 import "dotenv/config";
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { writeFileSync } from "node:fs";
+import { promisify } from "node:util";
 import { WebSocketServer } from "ws";
 import { statePath } from "./state.js";
 import {
   autoApproveEnabled,
   branchSessionAt,
   createSession,
+  deleteSessionRecord,
   findSessionPath,
   getModelConfig,
   getSessionTree,
   listSessions,
   messagesToHistory,
+  renameSessionRecord,
   type ServerSession,
   type SessionEvent,
 } from "./session.js";
@@ -68,6 +72,55 @@ const sessions = new Map<string, ServerSession>();
 
 function checkToken(headerToken: string | undefined, queryToken: string | undefined): boolean {
   return headerToken === TOKEN || queryToken === TOKEN;
+}
+
+const execFileAsync = promisify(execFile);
+
+/** Opens the REAL OS folder picker from the server process, for POST /v1/fs/pick — ported
+ * from OpenWorker's own `coworker/server/manager.py`'s `pick_native_folder()`. A plain browser
+ * tab can't get a real absolute path out of a web file dialog (the File System Access API only
+ * hands back a sandboxed handle), but this server runs locally on the same machine the browser
+ * does, so it can shell out to the platform's native picker and hand back the real path — the
+ * same trick OpenWorker's own sidecar uses, not a custom in-app dialog standing in for one.
+ * Blocks (up to 5 minutes) until the user picks or cancels; the route awaits it directly since
+ * only one folder pick happens at a time. */
+async function pickNativeFolder(): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> {
+  let cmd: string;
+  let args: string[];
+  if (process.platform === "darwin") {
+    cmd = "osascript";
+    args = [
+      "-e",
+      'tell application "System Events" to activate',
+      "-e",
+      'POSIX path of (choose folder with prompt "Give MetaHarn access to a folder")',
+    ];
+  } else if (process.platform === "win32") {
+    // WinForms folder dialog via PowerShell — no extra deps. -STA is required (the dialog
+    // silently fails in the default MTA apartment).
+    const ps =
+      "Add-Type -AssemblyName System.Windows.Forms; " +
+      "$f = New-Object System.Windows.Forms.FolderBrowserDialog; " +
+      "$f.Description = 'Give MetaHarn access to a folder'; " +
+      "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($f.SelectedPath) }";
+    cmd = "powershell.exe";
+    args = ["-NoProfile", "-STA", "-Command", ps];
+  } else {
+    // Linux: zenity when present; otherwise the caller falls back to manual path entry.
+    cmd = "zenity";
+    args = ["--file-selection", "--directory"];
+  }
+  try {
+    const { stdout } = await execFileAsync(cmd, args, { timeout: 300_000, windowsHide: true });
+    const path = stdout.trim();
+    return path ? { ok: true, path } : { ok: false, canceled: true };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: false, error: "no native folder picker available" };
+    // A non-zero exit here is the OS dialog's own cancel signal (osascript/zenity both exit
+    // non-zero on Cancel; the PowerShell script writes nothing to stdout on Cancel), not a
+    // real failure — same reasoning as the Python reference this was ported from.
+    return { ok: false, canceled: true };
+  }
 }
 
 function json(res: import("node:http").ServerResponse, status: number, body: unknown): void {
@@ -115,6 +168,12 @@ const server = createServer((req, res) => {
 
     if (url.pathname === "/v1/appInfo" && req.method === "GET") {
       json(res, 200, getModelConfig());
+      return;
+    }
+
+    if (url.pathname === "/v1/fs/pick" && req.method === "POST") {
+      const result = await pickNativeFolder();
+      json(res, 200, result);
       return;
     }
 
@@ -397,6 +456,46 @@ const server = createServer((req, res) => {
         return;
       }
       json(res, 200, { sessionId: newId });
+      return;
+    }
+
+    const renameMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/rename$/);
+    if (renameMatch && req.method === "PUT") {
+      const body = await readBody(req);
+      const title = String(body.title ?? "").trim();
+      if (!title) {
+        json(res, 400, { error: "title is required" });
+        return;
+      }
+      // A live in-memory session (the one currently open in a browser tab) can be ahead of
+      // what's on disk — rename it directly so its own next persist() doesn't clobber this;
+      // otherwise fall back to the on-disk record, same "not necessarily the live one"
+      // reasoning as branch/tree.
+      const live = sessions.get(renameMatch[1]);
+      if (live) live.rename(title);
+      const ok = live ? true : renameSessionRecord(renameMatch[1], title);
+      if (!ok) {
+        json(res, 404, { error: "no such session" });
+        return;
+      }
+      json(res, 200, { ok: true });
+      return;
+    }
+
+    const sessionIdMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)$/);
+    if (sessionIdMatch && req.method === "DELETE") {
+      const id = sessionIdMatch[1];
+      const live = sessions.get(id);
+      if (live) {
+        live.dispose();
+        sessions.delete(id);
+      }
+      const ok = deleteSessionRecord(id);
+      if (!ok) {
+        json(res, 404, { error: "no such session" });
+        return;
+      }
+      json(res, 200, { ok: true });
       return;
     }
 
