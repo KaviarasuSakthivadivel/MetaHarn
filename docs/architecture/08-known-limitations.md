@@ -82,21 +82,51 @@ persist — fixed by persisting eagerly the moment a `permission_required` event
 (rich button-prompt encoding for a mirrored surface like Slack) is still unused — no such
 surface exists here, and nothing in this codebase is expected to need it until one does.
 
-### Provider parity is 10, not ~19
+### Provider parity is 17 of ~20, web-only, and Bedrock is Claude-only
 
-`@metaharn/engine`'s `ProviderRouter` has real clients for `anthropic`, `openai`, `ollama`,
-`openrouter`, `together`, `fireworks`, `deepseek`, `groq`, `mistral`, and `xai` — every one
-but `anthropic` is `OpenAIProvider` pointed at that vendor's own documented OpenAI-compatible
-endpoint (`providers.ts`'s `PROVIDER_CATALOG`; no per-vendor SDK code). OpenWorker's own
-reference Settings > Models page lists ~19 (also Bedrock, Kimi, MiniMax, Qwen, Vertex,
-Volcengine, Z AI/GLM, and a few others), most of them behind auth flows genuinely different
-from an API key + base URL (Bedrock/Vertex are cloud-IAM-credentialed, not key-based). Settings
-> Models on both surfaces intentionally shows cards **only** for providers that actually
-work — no placeholder/fake cards for the rest — so closing the remaining gap means either a
-real non-OpenAI-compatible client implementation, or confirming a given vendor's endpoint
-really is OpenAI-compatible before adding it to the catalog (not assumed — the base URLs
-already in the catalog are each vendor's own published one, but none were live-tested against
-a real account in this pass; no keys were on hand for most of them).
+`@metaharn/engine`'s `ProviderRouter` now has real clients for 17 of OpenWorker's ~20
+(`coworker/providers/registry.py`): `anthropic`, `openai`, `gemini`, `bedrock`, `ollama`,
+`openrouter`, `together`, `fireworks`, `deepseek`, `groq`, `mistral`, `xai`, `zai`, `kimi`,
+`minimax`, `qwen`, `meta` — see [`09-owned-engine.md`](09-owned-engine.md) for the full
+writeup of what was added this pass (Gemini, Bedrock, and five more OpenAI-compatible
+vendors) versus what was already there. Web-only: `apps/desktop`'s `ownedProviders.ts` is a
+genuinely separate, independently-maintained catalog (not a shared module — see
+`session.ts`'s own "KNOWN DUPLICATION" doc comment) that this pass never touched, so none of
+the seven new providers exist on the Electron surface at all yet.
+
+Three providers from OpenWorker's list are still deliberately not built, each for a different
+reason rather than being simply forgotten:
+- **`openai-codex`** (ChatGPT subscription via OAuth, no API key) — needs a registered OAuth
+  client this environment has no credentials for. Not attemptable without those, not a scope
+  choice.
+- **`vertex`** (Google Cloud) — `@google/genai` (now a real dependency, added for the native
+  Gemini provider) supports Vertex mode too, so the SDK plumbing is a head start if this gets
+  picked up later, but real Google Cloud ADC/service-account credentials are needed to verify
+  it and none were available here. Direct Gemini + Bedrock already cover this app's two most
+  likely "run it in my own cloud account" cases.
+- **`ark`/`ark-agent-plan-cn`** (BytePlus/Volcengine) — OpenWorker reaches these through a
+  Responses-API-specific client (`OpenAIResponsesProvider`); `@metaharn/engine`'s OpenAI
+  provider only speaks Chat Completions, and guessing these vendors also accept that wire
+  shape rather than confirming it felt like the wrong kind of assumption to ship.
+
+**Bedrock is Claude-only, not full Converse-API parity.** OpenWorker's own Bedrock provider
+reaches every Bedrock model (Nova, Llama, Mistral, …) via the generic Converse API in addition
+to Claude's native path; `packages/engine/src/providers/bedrock.ts` only implements the native
+Claude path (`@anthropic-ai/bedrock-sdk`'s `AnthropicBedrock`, a drop-in for the same client
+`AnthropicProvider` already uses against the direct API) — a deliberate scope cut, not a gap
+found later. Claude is this app's primary model family everywhere else, and Converse is a
+materially different wire shape (its own converters, its own capability matrix) not judged
+worth the added surface for this pass.
+
+**Neither Gemini nor Bedrock has been exercised against a real account** — no Google or AWS
+credentials were available in this environment. Both were verified as far as this environment
+allows: real network calls with intentionally-wrong credentials (a nonexistent AWS profile; a
+fake Gemini API key) reached each vendor's actual endpoint and came back with a real,
+well-formed auth-rejection error surfaced cleanly through the normal chat error path — proving
+the message conversion, tool-schema conversion, and request plumbing all work up to that
+boundary — but no *successful* completion has been observed from either. The five new
+OpenAI-compatible vendors (Z AI, Kimi, MiniMax, Qwen, Meta) inherit the same "mechanism
+proven via Ollama, base URLs not live-tested" caveat the original ten already carried.
 
 ### Automation storage is separate per surface, on purpose
 

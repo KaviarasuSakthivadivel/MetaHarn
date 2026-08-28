@@ -824,6 +824,94 @@ resolving it); a real three-tool turn (`todo_write` → `web_search` → `list_f
 path=." with correct status-colored dots, then expanded on click to confirm the underlying
 args/result code blocks still render correctly under the new row layout.
 
+### Provider parity: Gemini, AWS Bedrock, and five OpenAI-compatible vendors
+
+Requested directly — "add all the missing providers from OpenWorker," with AWS Bedrock called
+out by name — against the gap `08-known-limitations.md` already had on record (10 of
+OpenWorker's ~20). `coworker/providers/registry.py` (OpenWorker's own definitive provider list)
+was read in full to scope this precisely rather than guess at what "missing" covered; see that
+doc's updated entry for exactly which three are still deliberately not built and why
+(`openai-codex`'s OAuth needs credentials this environment doesn't have; `vertex` and
+`ark`/`ark-agent-plan-cn` are flagged rather than guessed at).
+
+**Five new OpenAI-compatible vendors** — Z AI (GLM), Kimi (Moonshot AI), MiniMax, Qwen
+(Alibaba), Meta (Muse Spark) — needed zero new client code: `providers.ts`'s `PROVIDER_CATALOG`
+gained five more entries routed through the same `OpenAIProvider(apiKey, {baseURL})` construction
+Ollama already proved out, endpoints taken from OpenWorker's own `_compat()` descriptor calls
+(not guessed).
+
+**Gemini** (`packages/engine/src/providers/gemini.ts`) is a direct port of OpenWorker's own
+`coworker/providers/gemini_provider.py` against `@google/genai` (Google's official SDK — already
+a transitive dependency of `apps/desktop` via Pi's `@earendil-works/pi-ai`, promoted to a real
+`@metaharn/engine` dependency here) — function-for-function, not a reinterpretation, since the
+edge cases it handles (function calls carry no wire id and are matched back to their result by
+name via a synthesized-id map; tool schemas need OpenAPI-subset sanitization or the API 400s;
+Gemini 3's thought signatures must be echoed back verbatim on later requests or multi-turn tool
+loops break) were each hard-won in that reference implementation, not obvious from the API docs
+alone. Ported faithfully rather than taking the simpler-looking shortcut of routing through
+Gemini's own OpenAI-compatible endpoint — that shortcut would have skipped exactly the thought-
+signature and schema-sanitization handling that reference implementation exists to get right.
+
+**AWS Bedrock** (`packages/engine/src/providers/bedrock.ts`) reuses `AnthropicProvider`'s
+converters entirely rather than reimplementing them — `AnthropicBedrock` (from
+`@anthropic-ai/bedrock-sdk`, Anthropic's own drop-in Bedrock client) speaks the identical
+Messages API wire shape as the direct `Anthropic` client, so `BedrockProvider extends
+AnthropicProvider`, injecting only a differently-authenticated client. Getting the injection
+point right needed a small but real refactor: `AnthropicProvider`'s constructor originally
+always built its own `Anthropic` client from an API key; it now also accepts a pre-built client
+directly, typed as `Anthropic | AnthropicBedrock` (a plain `Pick<Anthropic, "messages">`
+structural type doesn't work — `AnthropicBedrock`'s `.messages` resource is a narrower type
+missing `batches`/`countTokens`, neither ever called here, but enough to fail structural
+assignability). All three of OpenWorker's own Bedrock auth methods are supported identically:
+a Bedrock API key (bearer token — the "Easiest" option in OpenWorker's own form), a named AWS
+profile (resolved via `@aws-sdk/credential-providers`' `fromIni`, injected through
+`AnthropicBedrock`'s `providerChainResolver` rather than mutating the process's `AWS_PROFILE`
+env var, so one session's profile choice can't leak into another's ambient credential
+resolution), or IAM access/secret keys (+ optional STS session token) — all falling through to
+the SDK's own default AWS credential chain when every field is left blank, same as OpenWorker's
+form. Scoped to Claude models only, not OpenWorker's full Converse-API reach — see
+`08-known-limitations.md` for why.
+
+**Server-side wiring**: `providers.ts`'s `ProviderCatalogEntry` gained an optional `kind:
+"gemini" | "bedrock"` dispatch hint (`anthropic` stays a plain name check, unchanged);
+`session.ts`'s `buildProviderClient()` branches on it. Bedrock doesn't fit the single
+`{apiKey, baseUrl}` profile shape every other provider uses, so `setProvider`'s input type (and
+the underlying SecretStore profile type) widened to a plain string-keyed bag — a real
+generalization, not a Bedrock-specific special case, so any future multi-field provider gets it
+for free. `apps/server/src/index.ts`'s `PUT /v1/providers/:name` now forwards the whole request
+body through that bag instead of picking out just `apiKey`/`baseUrl` by name.
+`resolveBedrockCredential()`/`bedrockConfigured()` read the three-method profile the same way
+OpenWorker's own `descriptor_configured()` does — a blank "profile" method still counts as
+configured, since its credentials are legitimately ambient and unverifiable without a live AWS
+call.
+
+**Web UI**: `Settings.tsx` gained real brand icons for all seven (`@lobehub/icons-static-svg`
+already had entries for gemini, bedrock, zhipu (Z AI's icon — Zhipu AI is Z AI's parent brand),
+kimi, minimax, qwen, and meta — no new icon package needed), curated model ids taken from
+OpenWorker's own `coworker/providers/matrix.py` rather than invented, descriptions, and a new
+`BedrockFields` component: Bedrock's provider detail page renders its own three-method form
+(region, a "Connect with" method selector, then only the fields that method needs) instead of
+the generic apiKey-input-plus-Test-button every other provider's card shows — the first provider
+card on either surface that needed more than one credential field.
+
+Verified as far as this environment allows without real cloud credentials, honestly reported
+rather than overclaimed: the full Settings > Models grid renders all 17 provider cards with
+correct icons live (CDP screenshot, all icons resolved, none falling back to the two-letter
+initial placeholder); Bedrock's detail page correctly swaps its rendered fields across all three
+auth methods; a real save round-trip through the REST API and SecretStore was confirmed (saved
+an AWS-profile-method Bedrock config, `GET /v1/providers` correctly reported `configured: true`,
+deleted it, confirmed it reverted to `false`). Most importantly, both new native providers were
+exercised against their REAL endpoints end-to-end, not just type-checked: a session configured
+for `bedrock:anthropic.claude-sonnet-4-6-v1:0` with a nonexistent AWS profile name produced a
+real `AWS SDK` credential-chain-resolution failure surfaced cleanly as a chat `error` event (not
+a crash — the server stayed up and served the next request normally); a session configured for
+`gemini:gemini-2.5-flash` with a syntactically-plausible-but-fake API key produced a real HTTP
+400 from `generativelanguage.googleapis.com` with Google's own `API_KEY_INVALID` error body,
+proving the request actually reached Gemini's real API correctly formed. Neither has been
+exercised to a *successful* completion — no real AWS or Google credentials were available in
+this environment — so treat both as "plumbing verified, not production-verified" until tried
+against a real account.
+
 ## Known gaps specific to this workstream
 
 See [`08-known-limitations.md`](08-known-limitations.md) for the full, itemized list (provider
