@@ -2411,3 +2411,124 @@
   opacity: 0.7;
 }
 
+/* ---------- Telemetry card ---------- */
+
+.telemetry-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  margin-top: 22px;
+  max-width: 640px;
+}
+
+.telemetry-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.telemetry-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.telemetry-card-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.telemetry-card-desc {
+  margin: 8px 0 0;
+  max-width: 520px;
+}
+
+.telemetry-card-desc a {
+  color: var(--accent-strong);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.telemetry-card-desc a:hover {
+  text-decoration: underline;
+}
+
+.telemetry-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 20px 0 8px;
+}
+
+.telemetry-endpoint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.telemetry-endpoint-url {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.telemetry-dashboard-link {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent-strong);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.telemetry-dashboard-link:hover {
+  text-decoration: underline;
+}
+
+.telemetry-field-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.telemetry-field-row > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.telemetry-field-row .field-label {
+  margin-top: 0;
+}
+
+.telemetry-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 20px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.telemetry-note svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warn);
+}
+

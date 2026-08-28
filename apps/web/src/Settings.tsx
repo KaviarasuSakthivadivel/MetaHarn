@@ -84,6 +84,26 @@ function IconPlay() {
   );
 }
 
+function IconInfo() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="12" y1="11" x2="12" y2="16" strokeLinecap="round" />
+      <line x1="12" y1="8" x2="12.01" y2="8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconExternalLink() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points="15 3 21 3 21 9" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="10" y1="14" x2="21" y2="3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function relativeTime(epochSeconds: number | null): string {
   if (!epochSeconds) return "never";
   const diff = Date.now() / 1000 - epochSeconds;
@@ -93,13 +113,226 @@ function relativeTime(epochSeconds: number | null): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+type TelemetryPreset = "self-hosted" | "cloud" | "custom";
+
+interface TelemetryEndpoint {
+  baseUrl: string;
+  httpPort: number;
+  grpcPort: number;
+}
+
+// Self-hosted matches `docker compose up -d` from https://github.com/lmnr-ai/lmnr's own
+// docker-compose.yml exactly: 8000/8001 are that stack's ingestion ports, 5667 its dashboard
+// (a different port on the same stack, not the same thing as the ingestion endpoint above).
+// Cloud values are Laminar's own SDK defaults (https://laminar.sh/docs/sdk/typescript/
+// instrumentation) — https, ports 443/8443.
+const TELEMETRY_PRESETS: Record<Exclude<TelemetryPreset, "custom">, TelemetryEndpoint & { dashboardUrl: string; label: string }> = {
+  "self-hosted": { baseUrl: "http://localhost", httpPort: 8000, grpcPort: 8001, dashboardUrl: "http://localhost:5667", label: "Self-hosted" },
+  cloud: { baseUrl: "https://api.lmnr.ai", httpPort: 443, grpcPort: 8443, dashboardUrl: "https://www.lmnr.ai/projects", label: "Laminar Cloud" },
+};
+
+function detectPreset(endpoint: TelemetryEndpoint): TelemetryPreset {
+  for (const key of ["self-hosted", "cloud"] as const) {
+    const p = TELEMETRY_PRESETS[key];
+    if (p.baseUrl === endpoint.baseUrl && p.httpPort === endpoint.httpPort && p.grpcPort === endpoint.grpcPort) return key;
+  }
+  return "custom";
+}
+
+function TelemetryCard({
+  settings,
+  uncoveredProviders,
+  onSaved,
+}: {
+  settings: GeneralSettings;
+  uncoveredProviders: string[];
+  onSaved: () => void;
+}) {
+  const [tab, setTab] = useState<TelemetryPreset>(() => detectPreset(settings.telemetryEndpoint));
+  const [customDraft, setCustomDraft] = useState<TelemetryEndpoint>(settings.telemetryEndpoint);
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  async function toggle() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await client.setTelemetry({ enabled: !settings.telemetryEnabled });
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyPreset(name: Exclude<TelemetryPreset, "custom">) {
+    setTab(name);
+    setBusy(true);
+    setError(undefined);
+    try {
+      const p = TELEMETRY_PRESETS[name];
+      await client.setTelemetry({ baseUrl: p.baseUrl, httpPort: p.httpPort, grpcPort: p.grpcPort });
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function selectCustom() {
+    setCustomDraft(settings.telemetryEndpoint);
+    setTab("custom");
+  }
+
+  async function saveCustomEndpoint() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await client.setTelemetry({ baseUrl: customDraft.baseUrl, httpPort: customDraft.httpPort, grpcPort: customDraft.grpcPort });
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveKey() {
+    if (!apiKeyDraft.trim()) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await client.setTelemetry({ apiKey: apiKeyDraft.trim() });
+      setApiKeyDraft("");
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const dashboardUrl = tab !== "custom" ? TELEMETRY_PRESETS[tab].dashboardUrl : undefined;
+
+  return (
+    <div className="telemetry-card">
+      <div className="telemetry-card-top">
+        <div>
+          <div className="telemetry-card-heading">
+            <span className="telemetry-card-title">Telemetry</span>
+            <span className={`provider-status ${settings.telemetryEnabled ? "configured" : "unset"}`}>{settings.telemetryEnabled ? "● Active" : "Off"}</span>
+          </div>
+          <p className="desc telemetry-card-desc">
+            Traces model calls to{" "}
+            <a href="https://laminar.sh" target="_blank" rel="noreferrer noopener">
+              Laminar
+            </a>{" "}
+            for debugging and observability. Request/response content leaves this machine when this is on.
+          </p>
+        </div>
+        <button className={`switch${settings.telemetryEnabled ? " on" : ""}`} disabled={busy} onClick={toggle} aria-label="Toggle telemetry" />
+      </div>
+
+      {error && (
+        <div className="error-banner" style={{ marginTop: 14 }}>
+          {error}
+        </div>
+      )}
+
+      <div className="telemetry-section-label">Endpoint</div>
+      <div className="method-tabs" role="tablist" aria-label="Telemetry endpoint">
+        <button type="button" role="tab" aria-selected={tab === "self-hosted"} className={`method-tab${tab === "self-hosted" ? " active" : ""}`} disabled={busy} onClick={() => applyPreset("self-hosted")}>
+          Self-hosted
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "cloud"} className={`method-tab${tab === "cloud" ? " active" : ""}`} disabled={busy} onClick={() => applyPreset("cloud")}>
+          Laminar Cloud
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "custom"} className={`method-tab${tab === "custom" ? " active" : ""}`} disabled={busy} onClick={selectCustom}>
+          Custom
+        </button>
+      </div>
+
+      {tab !== "custom" ? (
+        <div className="telemetry-endpoint-row">
+          <span className="telemetry-endpoint-url">
+            {settings.telemetryEndpoint.baseUrl} · HTTP {settings.telemetryEndpoint.httpPort} · gRPC {settings.telemetryEndpoint.grpcPort}
+          </span>
+          {dashboardUrl && (
+            <a className="telemetry-dashboard-link" href={dashboardUrl} target="_blank" rel="noreferrer noopener">
+              Open dashboard <IconExternalLink />
+            </a>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="telemetry-field-row">
+            <div>
+              <div className="field-label">Base URL</div>
+              <input
+                value={customDraft.baseUrl}
+                onChange={(e) => setCustomDraft({ ...customDraft, baseUrl: e.target.value })}
+                style={{ fontFamily: "var(--font-mono)" }}
+              />
+            </div>
+          </div>
+          <div className="telemetry-field-row">
+            <div>
+              <div className="field-label">HTTP port</div>
+              <input type="number" value={customDraft.httpPort} onChange={(e) => setCustomDraft({ ...customDraft, httpPort: Number(e.target.value) })} />
+            </div>
+            <div>
+              <div className="field-label">gRPC port</div>
+              <input type="number" value={customDraft.grpcPort} onChange={(e) => setCustomDraft({ ...customDraft, grpcPort: Number(e.target.value) })} />
+            </div>
+          </div>
+          <button className="btn-sm" style={{ marginTop: 10 }} disabled={busy} onClick={saveCustomEndpoint}>
+            Save endpoint
+          </button>
+        </>
+      )}
+
+      <div className="telemetry-section-label">Project API key</div>
+      <div className="field-row">
+        <input
+          type="password"
+          placeholder={settings.telemetryConfigured ? "•••••••••••• (replace)" : "Laminar project API key"}
+          value={apiKeyDraft}
+          onChange={(e) => setApiKeyDraft(e.target.value)}
+          style={{ fontFamily: "var(--font-mono)" }}
+        />
+        <button className="btn-sm" style={{ flex: "none" }} disabled={busy || !apiKeyDraft.trim()} onClick={saveKey}>
+          Save key
+        </button>
+      </div>
+
+      {uncoveredProviders.length > 0 && (
+        <div className="telemetry-note">
+          <IconInfo />
+          <span>
+            Not traced: <strong>{uncoveredProviders.join(", ")}</strong> — {uncoveredProviders.length === 1 ? "uses" : "use"} a client Laminar doesn't instrument.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GeneralTab() {
   const [settings, setSettings] = useState<GeneralSettings | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uncoveredProviders, setUncoveredProviders] = useState<string[]>([]);
 
-  useEffect(() => {
+  function refresh() {
     client.getSettings().then(setSettings).catch(() => {});
-  }, []);
+    client
+      .listProviders()
+      .then((r) => setUncoveredProviders(r.providers.filter((p) => !p.telemetryCovered).map((p) => p.displayName)))
+      .catch(() => {});
+  }
+  useEffect(refresh, []);
 
   async function toggleAutoApprove() {
     if (!settings) return;
@@ -131,6 +364,8 @@ function GeneralTab() {
             </div>
             <button className={`switch${settings.autoApprove ? " on" : ""}`} disabled={busy} onClick={toggleAutoApprove} aria-label="Toggle auto-approve mode" />
           </div>
+
+          <TelemetryCard settings={settings} uncoveredProviders={uncoveredProviders} onSaved={refresh} />
         </>
       )}
     </>

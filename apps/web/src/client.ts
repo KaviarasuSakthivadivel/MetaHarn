@@ -62,6 +62,8 @@ export interface ProviderStatus {
   baseUrl?: string;
   /** Present only for providers with a dispatch-specific client (currently "gemini"/"bedrock") — see apps/server/src/providers.ts's ProviderCatalogEntry. */
   kind?: "gemini" | "bedrock";
+  /** Whether enabling telemetry actually traces this provider — false only for "bedrock". */
+  telemetryCovered: boolean;
 }
 
 export type MemoryScope = "global" | "workspace";
@@ -286,6 +288,11 @@ export interface GeneralSettings {
   defaultModel: { provider: string; modelId: string };
   autoApprove: boolean;
   webSearchEnabled: boolean;
+  telemetryEnabled: boolean;
+  /** Whether a Laminar API key is resolvable (saved, or LMNR_PROJECT_API_KEY) — distinct from
+   * telemetryEnabled: a key can be configured but tracing still switched off. */
+  telemetryConfigured: boolean;
+  telemetryEndpoint: { baseUrl: string; httpPort: number; grpcPort: number };
 }
 
 export function getSettings(): Promise<GeneralSettings> {
@@ -298,6 +305,13 @@ export function setAutoApprove(enabled: boolean): Promise<void> {
 
 export function setWebSearchEnabled(enabled: boolean): Promise<void> {
   return request("/v1/settings/web-search", { method: "PUT", body: JSON.stringify({ enabled }) });
+}
+
+/** Either field alone is a valid call — passing just `apiKey` saves it without changing the
+ * toggle, passing just `enabled` flips the toggle using whatever key is already saved (or the
+ * LMNR_PROJECT_API_KEY env var). The server applies this live, no restart needed. */
+export function setTelemetry(input: { enabled?: boolean; apiKey?: string; baseUrl?: string; httpPort?: number; grpcPort?: number }): Promise<void> {
+  return request("/v1/settings/telemetry", { method: "PUT", body: JSON.stringify(input) });
 }
 
 // -- Settings > Memory -------------------------------------------------------------------
