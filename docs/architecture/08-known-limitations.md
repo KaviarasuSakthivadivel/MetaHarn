@@ -220,6 +220,16 @@ opening it outside MetaHarn (Finder, an editor) or asking the agent to paste its
 into chat, where Markdown rendering picks it up correctly. Not started; flagged here rather than
 attempted speculatively since it wasn't part of the request that surfaced it.
 
+### Web-only: server-shelled folder picker, session rename/delete, sidebar grouping
+
+Built for web specifically — see [`09-owned-engine.md`](09-owned-engine.md) for the full
+writeup. Electron has none of this: `folderPicker.ts`'s browser-tab fallback and the new `POST
+/v1/fs/pick` endpoint (the local server shells out to `osascript`/PowerShell/`zenity` for a real
+OS dialog) are both web-only — Electron doesn't need either, since it already has its own real
+native picker via `dialog.showOpenDialog` (`ipc.ts`), so this gap is about the other two
+features, not folder picking itself. Electron's session sidebar (`ipc.ts`/Pi's own session list)
+has no rename/delete/grouping affordances at all yet.
+
 ## Install/build environment quirks (already worked around, documented for context)
 
 This environment blocks native-module `postinstall` scripts by default (an `npm install-scripts` allowlist). One package is affected and already handled:

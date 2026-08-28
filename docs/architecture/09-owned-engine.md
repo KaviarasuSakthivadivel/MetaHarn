@@ -912,6 +912,72 @@ exercised to a *successful* completion — no real AWS or Google credentials wer
 this environment — so treat both as "plumbing verified, not production-verified" until tried
 against a real account.
 
+### Browser-based folder picker, session rename/delete, and sidebar grouping by project
+
+Three small sidebar/landing-page requests, one bug fix, done together.
+
+**Real native folder picker, even in a plain browser tab**: `folderPicker.ts`'s picker only
+works inside Tauri (`__TAURI_INTERNALS__` gates it) — a plain browser tab was previously left
+with only a manual path text field. The first version of this fix built a custom in-app HTML
+folder-browsing dialog backed by a server-side directory-listing endpoint; checking OpenWorker's
+own reference implementation (`coworker/server/manager.py`'s `pick_native_folder()`) before
+shipping that showed a materially better answer already proven out there, so the custom dialog
+was thrown away in favor of it: the LOCAL SERVER shells out to the platform's real OS folder
+dialog — `osascript`'s `choose folder` on macOS, a WinForms `FolderBrowserDialog` via PowerShell
+on Windows, `zenity --file-selection --directory` on Linux — and hands the chosen path back over
+HTTP. Since the server runs on the same machine as the browser (this whole app's premise), it
+can pop a genuine OS-native dialog even though the browser tab itself can't; the browser never
+sees anything but the resulting path. `pickNativeFolder()` (`apps/server/src/index.ts`) blocks
+up to 5 minutes waiting for the user to pick or cancel — a non-zero exit with empty stdout is
+the OS dialog's own cancel signal (matching the Python reference's `returncode != 0 or not
+path` check exactly), and a missing binary (`ENOENT`) is reported as "no native folder picker
+available" rather than treated as a cancel, so the two failure modes stay distinguishable.
+`POST /v1/fs/pick` exposes it; `App.tsx`'s `browse()` calls it whenever the Tauri native picker
+isn't available, and now always shows the "Browse" button (previously gated on `nativePicker`
+alone) rather than falling back to manual path entry as the only option. This is the correct
+read of the constraint `folderPicker.ts` itself documents (a browser's File System Access API
+only returns a sandboxed handle, never a real absolute path) — the fix isn't working around the
+browser sandbox from inside the browser, it's not needing to, since the server was never
+sandboxed in the first place.
+
+**Session rename/delete**: `session.ts` gained `renameSessionRecord()`/`deleteSessionRecord()`
+(disk-level, same "not necessarily the live one" shape as `branchSessionAt()` — a sidebar
+session is usually not the one currently open) plus `ServerSession.rename()` for keeping a
+*live* session's in-memory title in sync so its own next `persist()` doesn't clobber a rename
+with the auto-derived title. `DELETE /v1/sessions/:id` disposes the live session first (if any)
+before deleting its file and scratch directory — deleting a session no longer live still cleans
+up correctly since `deleteSessionRecord()` derives the scratch path from the id directly, not
+from a `ServerSession` instance. Sidebar UI: double-click a session's name (or the pencil icon)
+to rename inline; a trash icon (revealed on row hover) deletes with a native `confirm()` — if
+the deleted session is the one currently open, the view falls back to the landing page rather
+than showing a dead chat.
+
+**Sidebar grouping by project**: sessions were a flat, unlabeled list; now grouped by `cwd`
+(`groupedSessions` in `App.tsx`), one header per workspace, group order following
+`filteredSessions`' existing recency sort — so "most recently active project" floats to the top
+for free, no separate sort needed. Freed up the per-card meta line (previously repeating the
+same folder name the new group header already shows) to show something actually useful instead:
+relative time + message count.
+
+**Bug fixed along the way**: the delete confirmation flow surfaced a real gap in how far this
+session's earlier work was tested — building it required temporarily creating and deleting
+several real sessions across two synthetic project folders, and cleanup confirmed
+`deleteSessionRecord()`'s scratch-directory removal actually works (verified 1:1 — as many
+scratch directories on disk as session files, no orphans left after a real app-driven delete,
+not just a manual `rm -rf`).
+
+Verified live via CDP for rename/delete/grouping: three real sessions created across two
+workspace folders rendered as two correctly-labeled, correctly-ordered sidebar groups;
+double-click-to-rename produced a focused inline input, committed on Enter, and persisted (name
+updated in the list); delete removed the card immediately and left no orphaned session file or
+scratch directory behind. The native folder picker is NOT verified end to end — `osascript`
+being present and functional in this environment was confirmed directly (a no-UI script ran
+successfully), and the `choose folder` invocation is an unmodified port of OpenWorker's own
+already-shipping command, but the actual dialog pop-up and pick/cancel flow needs a human to
+click through it: CDP can drive the browser DOM, not a native OS dialog outside the browser
+entirely, and triggering one unprompted would leave a real, blocking system dialog on the
+user's screen with no programmatic way to dismiss it. Left for the user to try.
+
 ## Known gaps specific to this workstream
 
 See [`08-known-limitations.md`](08-known-limitations.md) for the full, itemized list (provider
