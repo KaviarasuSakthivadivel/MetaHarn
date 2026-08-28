@@ -1079,6 +1079,75 @@ instance, no errors in the server log across the full run) — the fix path itse
 live; confirming the trace count actually dropped to one in the dashboard is the one piece left
 for the user to eyeball, since that's Laminar's own UI, not something this environment queries.
 
+### Packaging telemetry: merged into MetaHarn's own docker-compose.yml, opt-in, auto-started
+
+Requested directly ("I don't want to start the app every time I start MetaHarn — what are my
+options?"), presented as a short menu, then narrowed to two of them explicitly ("do 2 and 3"):
+merge Laminar's services into this repo's own `docker-compose.yml` behind an opt-in profile, and
+have `apps/server` bring that profile up itself whenever telemetry is enabled and pointed at a
+local endpoint — so a standalone `opensource/lmnr` clone plus a manual `docker compose up -d`
+before every dev session is no longer the only path.
+
+**The merge, not a fresh stack**: the standalone clone already had a real project and real traces
+in it by this point (created verifying the `traceTurn` fix above), so this was a data migration,
+not a green-field compose file. The five `lmnr-*` services moved into this repo's root
+`docker-compose.yml` under `profiles: ["telemetry"]` (invisible to a plain `docker compose up -d`;
+only `--profile telemetry` touches them), each service's volumes pointed at the *exact* named
+volumes the standalone clone's project (`lmnr_postgres-data`, `lmnr_clickhouse-data`,
+`lmnr_clickhouse-logs`, `lmnr_quickwit-data`) had already created, declared `external: true` so
+this repo's compose project attaches to that existing data instead of creating its own empty
+volumes. Postgres/ClickHouse bake their auth into the data directory at first init, so the
+migrated services also had to reuse the exact credentials already living in that data — pulled
+from the running containers (`docker exec <container> env`) and the clone's own `.env`, not
+invented fresh, since a mismatched password wouldn't re-apply, it would just fail to authenticate
+against data that already expects the old one. The two ClickHouse config bind-mounts
+(`clickhouse-profiles-config.xml`, `clickhouse-server-config.xml` — real config: log-retention
+TTLs, several ClickHouse-internal telemetry logs disabled, a date-parsing profile setting) were
+carried over into this repo's root rather than dropped, since they're not cosmetic. One
+intentional deviation from the upstream compose file: every migrated port binds to `127.0.0.1`
+explicitly (the original bound `0.0.0.0`) — a self-hosted setup chosen specifically to keep trace
+data local shouldn't then expose its ingestion ports to the whole network by default.
+
+Cutover verified live, not just by inspection: the standalone clone's stack was brought down
+(`docker compose down`, deliberately without `-v`, preserving the named volumes), the new merged
+stack brought up in its place (`docker compose --profile telemetry up -d` from this repo), and the
+frontend's own boot log confirmed it recognized the *existing* data rather than initializing fresh
+(`relation "__drizzle_migrations" already exists, skipping`) — then a direct query against the
+migrated Postgres volume confirmed the original project row was intact byte-for-byte (same UUID,
+same name) under the new compose project.
+
+**Auto-start — `apps/server/src/telemetryDocker.ts`**: `ensureTelemetryStackRunning()` spawns
+`docker compose --profile telemetry up -d` (detached, fire-and-forget — callers never await it)
+scoped to the five `lmnr-*` services by name, not the whole `--profile telemetry` set. That
+distinction matters on this exact machine: the profile-less `postgres` service in the same compose
+file (MetaHarn's own, unrelated to telemetry) is "always on" by Compose's own rules, and this
+machine already had a *different* project's Postgres container bound to host port 5432 — bringing
+that service up as a side effect of enabling telemetry would fail (or at best print a scary
+warning) over something telemetry has nothing to do with, so the auto-start intentionally never
+touches it. `isSelfHostedEndpoint(baseUrl)` gates every call site (hostname is
+`localhost`/`127.0.0.1`/`::1`) — Laminar Cloud or a custom remote endpoint never triggers a local
+Docker spawn, since this repo's compose file has nothing to do with reaching those. Wired into both
+places telemetry can turn on: `initTelemetryFromSettings()` (server boot, restoring a
+previously-enabled setting) and the success path of `setTelemetryEnabled(true)` (the Settings UI
+toggle). Fully tolerant of Docker being absent or not running — a caught `spawn` error just logs a
+warning and tracing calls fail to reach a collector, exactly as before this existed; nothing else
+in the app depends on it.
+
+Verified live end-to-end, including the failure mode it's meant to prevent: with the stack
+manually stopped (`docker compose --profile telemetry stop ...`), restarting the dev server (which
+runs `initTelemetryFromSettings()` at boot) brought all five containers back up with no manual
+`docker compose` invocation — confirmed by watching container state transition from absent to
+`Up ... (healthy)` within seconds of the restart, then re-confirming the dashboard and the original
+project row were still reachable afterward.
+
+The standalone `opensource/lmnr` clone still exists on disk but its own compose project is fully
+stopped — its four named volumes are now owned by this repo's compose project via the
+`external: true` references above, so bringing the standalone project back up again would double-
+attach to the same data from two different compose projects at once and isn't something to do
+casually. Kept around for reference (it's the actual upstream source for the merged service
+definitions) rather than deleted, since removing someone's cloned repo isn't this workstream's call
+to make unprompted.
+
 ## Known gaps specific to this workstream
 
 See [`08-known-limitations.md`](08-known-limitations.md) for the full, itemized list (provider

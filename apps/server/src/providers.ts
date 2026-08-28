@@ -11,6 +11,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { SecretStore } from "@metaharn/engine/src/trust/secretStore.js";
 import { disableTelemetry, enableTelemetry } from "@metaharn/engine/src/telemetry.js";
 import { statePath } from "./state.js";
+import { ensureTelemetryStackRunning, isSelfHostedEndpoint } from "./telemetryDocker.js";
 
 export interface ProviderCatalogEntry {
   name: string;
@@ -294,7 +295,9 @@ export async function setTelemetryEnabled(enabled: boolean): Promise<void> {
   if (enabled) {
     const apiKey = getTelemetryApiKey();
     if (!apiKey) throw new Error("No Laminar API key configured — add one before enabling telemetry.");
-    enableTelemetry(apiKey, getTelemetryEndpoint());
+    const endpoint = getTelemetryEndpoint();
+    enableTelemetry(apiKey, endpoint);
+    if (isSelfHostedEndpoint(endpoint.baseUrl)) ensureTelemetryStackRunning();
   } else {
     await disableTelemetry();
   }
@@ -302,10 +305,15 @@ export async function setTelemetryEnabled(enabled: boolean): Promise<void> {
 
 /** Called once at server boot — re-applies a previously-saved "enabled" setting so tracing
  * resumes after a restart without the user having to re-toggle it. Silent no-op (not an error)
- * if enabled but no key is configured — the Settings page surfaces that state instead. */
+ * if enabled but no key is configured — the Settings page surfaces that state instead. Also
+ * kicks off the self-hosted Docker stack (fire-and-forget) when the saved endpoint points at
+ * one, so a machine restart brings tracing all the way back without a manual `docker compose`
+ * step in between. */
 export function initTelemetryFromSettings(): void {
   if (getTelemetryEnabled()) {
     const apiKey = getTelemetryApiKey();
-    if (apiKey) enableTelemetry(apiKey, getTelemetryEndpoint());
+    const endpoint = getTelemetryEndpoint();
+    if (apiKey) enableTelemetry(apiKey, endpoint);
+    if (isSelfHostedEndpoint(endpoint.baseUrl)) ensureTelemetryStackRunning();
   }
 }

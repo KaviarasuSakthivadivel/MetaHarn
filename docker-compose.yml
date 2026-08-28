@@ -11,5 +11,154 @@ services:
     volumes:
       - metaharn_pgdata:/var/lib/postgresql/data
 
+  # -- Telemetry (Laminar, self-hosted) --------------------------------------------------
+  # Off by default — `docker compose up -d` alone never touches these; only
+  # `docker compose --profile telemetry up -d` does (apps/server also runs that exact
+  # command itself, best-effort, whenever telemetry is enabled and pointed at this
+  # machine — see apps/server/src/telemetryDocker.ts). Merged in from lmnr-ai/lmnr's own
+  # docker-compose.yml rather than kept as a separate clone, so one `docker compose`
+  # invocation from this repo covers everything MetaHarn needs, telemetry included.
+  #
+  # Credentials below are lmnr-ai/lmnr's own checked-in quickstart defaults (not secrets
+  # generated here) — kept byte-for-byte identical on purpose: Postgres/ClickHouse auth is
+  # baked into their data directories at first init, so changing these after the fact
+  # would lock out whatever the volumes already hold. Fine for the localhost-only,
+  # single-user use this is meant for (ports below are explicitly bound to 127.0.0.1, not
+  # every interface, unlike lmnr's own compose file); rotate them if this ever needs to be
+  # reachable from anywhere else.
+  lmnr-postgres:
+    image: postgres:16
+    profiles: ["telemetry"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_passwordabc
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - lmnr_postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 5
+
+  lmnr-clickhouse:
+    image: clickhouse/clickhouse-server:26.5
+    container_name: lmnr-clickhouse
+    profiles: ["telemetry"]
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: lmnr_clickhouse-data
+        target: /var/lib/clickhouse/
+      - type: volume
+        source: lmnr_clickhouse-logs
+        target: /var/log/clickhouse-server/
+      - type: bind
+        source: ./clickhouse-profiles-config.xml
+        target: /etc/clickhouse-server/users.d/lmnr.xml
+      - type: bind
+        source: ./clickhouse-server-config.xml
+        target: /etc/clickhouse-server/config.d/lmnr.xml
+    environment:
+      CLICKHOUSE_USER: ch_user
+      CLICKHOUSE_PASSWORD: ch_passwd
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  lmnr-quickwit:
+    image: quickwit/quickwit:v0.8.2
+    profiles: ["telemetry"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7280:7280" # REST API and UI
+      - "127.0.0.1:7281:7281" # OTLP / gRPC
+    environment:
+      QW_DATA_DIR: /quickwit/qwdata
+    command: ["run"]
+    volumes:
+      - lmnr_quickwit-data:/quickwit/qwdata
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7280/health/livez"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  lmnr-frontend:
+    image: ghcr.io/lmnr-ai/frontend
+    profiles: ["telemetry"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5667:5667"
+    depends_on:
+      lmnr-postgres:
+        condition: service_healthy
+      lmnr-quickwit:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres_passwordabc@lmnr-postgres:5432/postgres
+      PORT: 5667
+      BACKEND_URL: http://lmnr-app-server:8000
+      BACKEND_RT_URL: http://lmnr-app-server:8002
+      SHARED_SECRET_TOKEN: some_secret
+      NEXTAUTH_URL: http://localhost:5667
+      NEXTAUTH_SECRET: 0123456789abcdef0123456789abcdef
+      NEXT_PUBLIC_URL: http://localhost:5667
+      ENVIRONMENT: LITE # disables some runtime dependencies (RabbitMQ etc.)
+      CLICKHOUSE_URL: http://lmnr-clickhouse:8123
+      CLICKHOUSE_USER: ch_user
+      CLICKHOUSE_PASSWORD: ch_passwd
+      CLICKHOUSE_RO_USER: ch_user
+      CLICKHOUSE_RO_PASSWORD: ch_passwd
+      AEAD_SECRET_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      QUICKWIT_SEARCH_URL: http://lmnr-quickwit:7280
+      # LLM-powered frontend features (chat-with-trace, SQL-with-AI) are opt-in and unset
+      # here on purpose — MetaHarn's own tracing doesn't need them, and wiring one of
+      # this app's already-configured provider keys into a THIRD PARTY container's env
+      # is a bigger trust boundary than this integration should quietly cross.
+
+  lmnr-app-server:
+    image: ghcr.io/lmnr-ai/app-server
+    profiles: ["telemetry"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8001:8001"
+      - "127.0.0.1:8002:8002"
+    depends_on:
+      lmnr-postgres:
+        condition: service_healthy
+      lmnr-clickhouse:
+        condition: service_started
+      lmnr-quickwit:
+        condition: service_healthy
+    environment:
+      PORT: 8000
+      GRPC_PORT: 8001
+      DATABASE_URL: postgres://postgres:postgres_passwordabc@lmnr-postgres:5432/postgres
+      SHARED_SECRET_TOKEN: some_secret
+      CLICKHOUSE_URL: http://lmnr-clickhouse:8123
+      CLICKHOUSE_USER: ch_user
+      CLICKHOUSE_PASSWORD: ch_passwd
+      CLICKHOUSE_RO_USER: ch_user
+      CLICKHOUSE_RO_PASSWORD: ch_passwd
+      ENVIRONMENT: LITE # disables the runtime dependency on RabbitMQ
+      AEAD_SECRET_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      QUICKWIT_SEARCH_URL: http://lmnr-quickwit:7280
+      QUICKWIT_INGEST_URL: http://lmnr-quickwit:7281
+      QUICKWIT_SPANS_INDEX_ID: spans_v2
+
 volumes:
   metaharn_pgdata:
+  lmnr_postgres-data:
+    external: true
+  lmnr_clickhouse-data:
+    external: true
+  lmnr_clickhouse-logs:
+    external: true
+  lmnr_quickwit-data:
+    external: true
