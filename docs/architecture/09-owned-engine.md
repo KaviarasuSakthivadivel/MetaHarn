@@ -1265,6 +1265,80 @@ started on a different provider's model and confirmed both the picker's own labe
 on-disk session record (`model: "anthropic:claude-sonnet-5"`) updated — the full path from click
 to persisted state, not just the UI layer.
 
+### Three-tier memory — episodic and procedural, closing the gap flagged in the Moat Map research
+
+Directly requested off the back of the "MetaHarn Runtime" research artifact's memory section,
+which scored this codebase "behind" on memory specifically: one tier only (explicit,
+user-saved facts in `SqliteMemoryStore`), nothing auto-derived, no decay or conflict
+resolution. This implements the other two tiers of the CoALA taxonomy that research grounded
+the gap in — episodic (what happened) and procedural (how this workspace actually operates) —
+each with a real write policy, retrieval strategy, and decay mechanism, deliberately scoped to
+what's honestly implementable rather than a claim to have solved memory conflict resolution in
+general (that research explicitly names as still-unsolved field-wide).
+
+**Episodic memory (`packages/engine/src/memory/episodicStore.ts`)** — one row per PAST session
+in a workspace, a 2-3 sentence model-written summary of that session's task and outcome.
+*Write policy*: a session graduates into episodic memory once it's no longer the live one —
+`ServerSession.summarizeUnsummarizedSessions()` runs fire-and-forget whenever a NEW session
+opens in the same workspace, catching up on whichever recent prior sessions (capped at 2 per
+call, to bound cost on a workspace with a long backlog) don't have a row yet, using that
+session's own already-resolved provider/model — no separate client to configure. *Retrieval*:
+`listRecent()`, rendered by a new `renderEpisodicBlock()` (memory/types.ts) into its own
+system-prompt section — "Recent sessions in this workspace" — deliberately separate from the
+semantic memories block, since "what happened before" and "what's known to be true" are
+different kinds of context and keeping them visually distinct in the prompt matters, not just
+in the code. *Decay*: `pruneOlderThan()`, a recency-bounded retention sweep (180 days), run
+once at server boot — episodic memory doesn't need contradiction resolution the way a fact
+does (a later session doesn't "contradict" an earlier one, it supersedes it in relevance), so
+age-bounding is the honest policy here, not a dodge.
+
+**Procedural memory (`packages/engine/src/memory/proceduralStore.ts`)** — formalizes standing
+rule state `PermissionEngine` already tracked (`sessionAllowTools`/`sessionAllowCommands`/
+`sessionAllowDomains`/`sessionReadonly`) but only ever kept in an in-memory `Set` that
+evaporated the moment a session ended. *Write policy, deliberately conservative*: a single
+"always allow" click still only populates the existing session-scoped Sets — this store merely
+**observes** it (`observe()`, called from the same `allow*ForSession` methods a click already
+triggers). A rule only becomes something `evaluate()` will actually honor once it's been
+observed across 3 DISTINCT past sessions — a real repeated habit, not a one-off click, which is
+what makes silently honoring it later defensible rather than a silent escalation-through-
+repetition risk. This mirrors the security posture already established elsewhere in this
+package (the self-protection floor, persistent-authority tools needing a human) — a promoted
+rule is subject to the exact same `honorSessionGrants` gate a live session grant is, so it
+never bypasses the reviewer in auto-approve mode either. *Retrieval*: `listPromoted()`,
+consulted by `evaluate()` at the same tier as the in-memory session grants — additive, never
+ahead of the mode/allowlist checks that already run first. *Decay*: `pruneStale()` — a
+promoted rule not actually used in 90 days is retired; conflict resolution for this tier is
+naturally simpler than prose facts (an additive allow-list over a small discrete space has no
+contradictions to resolve, only staleness and explicit revocation via the new Settings UI).
+
+**Fixed a dead-code gap found while wiring this in**: `memory/settings.ts`'s
+`MemorySettingsStore` and `formatUserRules()` already existed — a full "memory on/off" toggle
+and a user-rules text field — but nothing in `apps/server` ever constructed or read them;
+`session.ts` hardcoded `savingEnabled: () => true` and never injected user rules at all. Now
+wired for real: memory tools are registered (and the semantic/episodic blocks rendered) only
+when `memorySettings.enabled`, matching that module's own doc ("off means no memory tools, no
+memories block, no memory guidance") exactly rather than only refusing writes; `formatUserRules`
+is injected into `instructions` whenever the field is non-empty.
+
+**Server + UI**: new routes (`GET /v1/memory/episodic`, `GET`/`DELETE /v1/memory/procedural`,
+`GET`/`PUT /v1/memory/settings`), a `pruneStaleMemory()` sweep called once at server boot
+alongside the existing telemetry re-init, and the Settings ▸ Memory tab gained four new
+sections above the existing facts list: the enabled toggle, a user-rules editor, "Recent
+sessions" (episodic, read-only), and "Standing rules" (procedural, revocable, showing
+not-yet-promoted rules too — e.g. "observed in 2/3 sessions" — so a forming pattern is visible
+rather than silently invisible until it crosses the threshold).
+
+**Verified live, not just type-checked**: the promotion mechanism was checked directly —
+three separate `PermissionEngine` instances (simulating three distinct real sessions) each
+calling `allowToolForSession()`, then a FOURTH brand-new session (which never itself granted
+anything) correctly auto-allowed the same tool via the durable rule; a parallel check confirmed
+auto-approve mode correctly refuses to honor a promoted rule silently, falling through to the
+reviewer exactly like a live session grant would. Episodic memory was verified end-to-end
+through the real running app via CDP: a real session, a real exchange, a second session opened
+in the same workspace, and a genuine model-written summary ("The task was to calculate 7 × 6
+and respond with only the numerical answer...") appeared via the API and rendered correctly in
+the Settings UI.
+
 ## Known gaps specific to this workstream
 
 See [`08-known-limitations.md`](08-known-limitations.md) for the full, itemized list (provider

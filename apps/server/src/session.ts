@@ -45,8 +45,11 @@ import { MCPManager } from "@metaharn/engine/src/mcp/client.js";
 import { loadMcpServers } from "@metaharn/engine/src/mcp/config.js";
 import { loadMcpTools } from "@metaharn/engine/src/mcp/tools.js";
 import { SqliteMemoryStore } from "@metaharn/engine/src/memory/sqliteStore.js";
+import { SqliteEpisodicStore } from "@metaharn/engine/src/memory/episodicStore.js";
+import { SqliteProceduralStore } from "@metaharn/engine/src/memory/proceduralStore.js";
+import { MemorySettingsStore, formatUserRules } from "@metaharn/engine/src/memory/settings.js";
 import { memoryTools } from "@metaharn/engine/src/memory/tools.js";
-import { renderMemoryBlock } from "@metaharn/engine/src/memory/types.js";
+import { renderEpisodicBlock, renderMemoryBlock } from "@metaharn/engine/src/memory/types.js";
 import { Reviewer } from "@metaharn/engine/src/reviewer.js";
 import { createCompactionHook } from "@metaharn/engine/src/compaction.js";
 import { capture } from "@metaharn/engine/src/trust/sessionFacts.js";
@@ -332,6 +335,9 @@ export class ServerSession {
   private readonly branchPointIndex?: number;
   private readonly engine: Engine;
   private readonly memoryStore: SqliteMemoryStore;
+  private readonly episodicStore: SqliteEpisodicStore;
+  private readonly proceduralStore: SqliteProceduralStore;
+  private readonly provider: ProviderRouter;
   private readonly auditStore: AuditStore;
   private readonly mcpManager = new MCPManager();
   // Public and mutable by design (see permissions/roots.ts's module doc) — the multi-folder
@@ -354,6 +360,7 @@ export class ServerSession {
 
     const { provider: defaultProvider, modelId: defaultModelId } = getDefaultModel();
     const provider = new ProviderRouter({ buildClient: buildProviderClient, defaultProvider, knownProviders: KNOWN_PROVIDERS });
+    this.provider = provider;
     this.model = opts.model ?? `${defaultProvider}:${defaultModelId}`;
     // The active provider's own name, for the context-window lookup below — NOT always
     // `defaultProvider`: opts.model (a resumed or just-switched session) can carry a
@@ -375,13 +382,32 @@ export class ServerSession {
     // gate like the model providers above. "Sources" in the multi-folder Access panel.
     if (getWebSearchEnabled()) registry.register(createWebSearchTool());
 
+    // Three memory tiers: semantic (explicit facts, this store), episodic (auto-derived past-
+    // session summaries, episodicStore below), and procedural (durable standing permission
+    // rules, wired into PermissionEngine below instead of into the prompt — see
+    // memory/proceduralStore.ts's module doc for why that tier lives there, not here).
+    const memorySettings = new MemorySettingsStore(join(stateDir(), "memorySettings.json"));
     this.memoryStore = new SqliteMemoryStore(join(stateDir(), "memory.db"));
-    registry.registerAll(memoryTools({ store: this.memoryStore, workspace: repoPath, savingEnabled: () => true }));
-    const remembered = [
-      ...this.memoryStore.list({ scope: "global" }),
-      ...this.memoryStore.list({ scope: "workspace", workspace: repoPath }),
-    ];
-    const memoryBlock = renderMemoryBlock(remembered);
+    this.episodicStore = new SqliteEpisodicStore(join(stateDir(), "episodicMemory.db"));
+    this.proceduralStore = new SqliteProceduralStore(join(stateDir(), "proceduralMemory.db"));
+
+    let memoryBlock = "";
+    let episodicBlock = "";
+    let userRulesBlock = "";
+    // Off means built with no memory tools, no memories block, no memory guidance at all —
+    // matching memory/settings.ts's own module doc exactly, not just refusing writes.
+    // `savingEnabled` still re-reads live (tools.ts's requirement) for the case this flips
+    // off mid-session, after the tools were already registered at build time.
+    if (memorySettings.enabled) {
+      registry.registerAll(memoryTools({ store: this.memoryStore, workspace: repoPath, savingEnabled: () => memorySettings.enabled }));
+      const remembered = [
+        ...this.memoryStore.list({ scope: "global" }),
+        ...this.memoryStore.list({ scope: "workspace", workspace: repoPath }),
+      ];
+      memoryBlock = renderMemoryBlock(remembered);
+      episodicBlock = renderEpisodicBlock(this.episodicStore.listRecent(repoPath, 8));
+      userRulesBlock = formatUserRules(memorySettings.userRules);
+    }
 
     this.auditStore = new AuditStore(join(stateDir(), "audit.db"));
 
@@ -400,6 +426,11 @@ export class ServerSession {
       autoAllowTools: opts.unattended ? opts.autoAllowTools ?? [] : undefined,
       taskRules: opts.unattended ? opts.taskRules : undefined,
       protectedPaths: [],
+      // Wired unconditionally, including for unattended/automation runs — those never
+      // themselves OBSERVE a grant (no human present to click "always allow"), but they can
+      // still benefit from a rule already promoted via real interactive sessions in this
+      // workspace, same as a config allowlist would.
+      proceduralMemory: { store: this.proceduralStore, sessionId: this.sessionId },
       roots: [
         { path: repoPath, writable: true },
         { path: scratchDir, writable: true, label: "scratch" },
@@ -408,6 +439,8 @@ export class ServerSession {
 
     let instructions = `${BASE_INSTRUCTIONS}\n\n${buildContextDoc(repoPath)}`;
     if (memoryBlock) instructions += `\n\n${MEMORY_GUIDANCE}\n\n${memoryBlock}`;
+    if (episodicBlock) instructions += `\n\n${episodicBlock}`;
+    if (userRulesBlock) instructions += `\n\n${userRulesBlock}`;
 
     const model = this.model;
 
@@ -437,6 +470,7 @@ export class ServerSession {
     });
 
     void this.loadMcpToolsInBackground(registry);
+    void this.summarizeUnsummarizedSessions();
   }
 
   private async loadMcpToolsInBackground(registry: ToolRegistry): Promise<void> {
@@ -450,6 +484,56 @@ export class ServerSession {
       } catch (err) {
         console.warn(`[metaharn-server] MCP server "${server.name}" failed to connect:`, (err as Error).message);
       }
+    }
+  }
+
+  /** Episodic memory's write policy: a session graduates into episodic memory once it's no
+   * longer the live one — this runs (fire-and-forget, best-effort) whenever a NEW session
+   * opens in the same workspace, catching up on whichever recent prior sessions there don't
+   * have a row yet. Capped to a handful per call so opening a workspace with a long history
+   * doesn't fire a burst of LLM calls; the backlog just catches up gradually, one new session
+   * at a time. Uses this session's own provider/model — no separate client to configure, and
+   * consistent with whatever the user already has set up. */
+  private async summarizeUnsummarizedSessions(): Promise<void> {
+    const memorySettings = new MemorySettingsStore(join(stateDir(), "memorySettings.json"));
+    if (!memorySettings.enabled) return;
+    try {
+      const candidates = listSessions()
+        .filter((s) => s.cwd === this.cwd && s.id !== this.sessionId && s.messageCount > 0)
+        .filter((s) => !this.episodicStore.hasSummary(s.id))
+        .slice(0, 2);
+      for (const item of candidates) {
+        const record = loadSessionRecord(item.path);
+        if (!record) continue;
+        const transcript = record.messages
+          .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
+          .map((m) => `${m.role}: ${m.content as string}`)
+          .join("\n")
+          .slice(0, 6_000); // bounds the summarization prompt, not a claim the rest doesn't matter
+        if (!transcript.trim()) continue;
+        let summary = "";
+        try {
+          const turn = await this.provider.complete({
+            model: this.model,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "Summarize this coding session in 2-3 sentences: what was the task, what was the outcome, " +
+                  "and anything left unresolved. Be concrete and specific, no preamble.",
+              },
+              { role: "user", content: transcript },
+            ],
+          });
+          summary = (turn.text ?? "").trim();
+        } catch (err) {
+          console.warn(`[metaharn-server] episodic summarization call failed for session ${item.id}:`, (err as Error).message);
+          continue;
+        }
+        if (summary) this.episodicStore.add({ workspace: this.cwd, sessionId: item.id, summary, messageCount: item.messageCount });
+      }
+    } catch (err) {
+      console.warn("[metaharn-server] episodic summarization failed:", (err as Error).message);
     }
   }
 
@@ -646,6 +730,8 @@ export class ServerSession {
     // durable Inbox (inboxApi.ts) is that a pending row survives this session being torn
     // down; resumePending() picks it back up on next load instead.
     this.memoryStore.close();
+    this.episodicStore.close();
+    this.proceduralStore.close();
     this.auditStore.close();
     void this.mcpManager.aclose();
   }

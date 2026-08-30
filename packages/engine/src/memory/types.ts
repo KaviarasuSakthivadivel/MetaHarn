@@ -148,3 +148,23 @@ export function renderMemoryBlock(
   if (full.length <= thresholdChars) return full;
   return formatMemoryIndex(items);
 }
+
+// ---------------------------------------------------------------------------------------
+// Episodic rendering — a separate block from the semantic one above. "What happened in
+// past sessions here" is a different kind of context than "what's known to be true," and
+// keeping them as distinct headings makes that legible to a reader of the prompt, not just
+// to the code (see episodicStore.ts's module doc for the write/retrieval/decay policy).
+// ---------------------------------------------------------------------------------------
+
+/** Structurally identical to memory/episodicStore.ts's EpisodicItem — redeclared here so
+ * this file (types + rendering only) doesn't need to import the SQLite adapter module. */
+export interface EpisodicItemLike {
+  summary: string;
+  createdAt: string;
+}
+
+export function renderEpisodicBlock(items: EpisodicItemLike[]): string {
+  if (items.length === 0) return "";
+  const lines = items.map((item) => `- (${item.createdAt.slice(0, 10)}) ${item.summary}`);
+  return "Recent sessions in this workspace (most recent first):\n" + lines.join("\n");
+}

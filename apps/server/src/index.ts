@@ -54,7 +54,18 @@ import {
 import { isWorkspaceTrusted, setWorkspaceTrust } from "./workspaceTrustApi.js";
 import { beginCodexSignIn, codexSignOut, codexStatus, runCodexSignIn } from "./codexAuthApi.js";
 import { listPendingInbox, resolveInboxItem } from "./inboxApi.js";
-import { addMemory, deleteMemory, listMemories, updateMemory } from "./memoryApi.js";
+import {
+  addMemory,
+  deleteMemory,
+  getMemorySettings,
+  listEpisodicMemories,
+  listMemories,
+  listProceduralRules,
+  pruneStaleMemory,
+  revokeProceduralRule,
+  setMemorySettings,
+  updateMemory,
+} from "./memoryApi.js";
 import { deleteMcpServer, listMcpServers, putMcpServer, testMcpServer, type McpServerInput } from "./mcpApi.js";
 import {
   createAutomation,
@@ -90,6 +101,11 @@ const sessions = new Map<string, ServerSession>();
 // restart — must run before any session/provider gets constructed, so this sits at the top of
 // the boot sequence, well before the server starts accepting the requests that would create one.
 initTelemetryFromSettings();
+
+// Once-per-boot decay sweep for the two auto-derived memory tiers — see memoryApi.ts's
+// pruneStaleMemory() doc for why a lazy per-boot sweep, not a cron, is the right amount of
+// machinery for a locally-run single-user tool.
+pruneStaleMemory();
 
 function checkToken(headerToken: string | undefined, queryToken: string | undefined): boolean {
   return headerToken === TOKEN || queryToken === TOKEN;
@@ -334,6 +350,42 @@ const server = createServer((req, res) => {
     }
     if (memoryMatch && req.method === "DELETE") {
       json(res, 200, { ok: deleteMemory(Number(memoryMatch[1])) });
+      return;
+    }
+
+    // Episodic tier: auto-derived past-session summaries, read-only from this surface (the
+    // agent writes these, not the user — see session.ts's summarizeUnsummarizedSessions()).
+    if (url.pathname === "/v1/memory/episodic" && req.method === "GET") {
+      const workspace = url.searchParams.get("workspace") ?? "";
+      json(res, 200, { episodes: workspace ? listEpisodicMemories(workspace) : [] });
+      return;
+    }
+
+    // Procedural tier: durable standing permission rules. Listed (promoted or not, so a
+    // forming pattern is visible before it's silently in effect) and revocable, never
+    // user-created directly — these only ever originate from repeated "always allow" clicks
+    // in the Inbox (see permissions/engine.ts's observeProcedural()).
+    if (url.pathname === "/v1/memory/procedural" && req.method === "GET") {
+      const workspace = url.searchParams.get("workspace") ?? "";
+      json(res, 200, { rules: workspace ? listProceduralRules(workspace) : [] });
+      return;
+    }
+    const proceduralMatch = url.pathname.match(/^\/v1\/memory\/procedural\/(\d+)$/);
+    if (proceduralMatch && req.method === "DELETE") {
+      json(res, 200, { ok: revokeProceduralRule(Number(proceduralMatch[1])) });
+      return;
+    }
+
+    if (url.pathname === "/v1/memory/settings" && req.method === "GET") {
+      json(res, 200, getMemorySettings());
+      return;
+    }
+    if (url.pathname === "/v1/memory/settings" && req.method === "PUT") {
+      const body = await readBody(req);
+      const update: { enabled?: boolean; userRules?: string } = {};
+      if (typeof body.enabled === "boolean") update.enabled = body.enabled;
+      if (typeof body.userRules === "string") update.userRules = body.userRules;
+      json(res, 200, setMemorySettings(update));
       return;
     }
 

@@ -19,6 +19,7 @@ import { classify, isConsequential, type RiskOverrides } from "./risk.js";
 import { normalizeRoots, resolveRealPath, type RootDir, type RootDirInput } from "./roots.js";
 import { isCommandAllowed } from "./shellAllowlist.js";
 import { isReadonlyCommand, readTargets } from "./readonlyClassifier.js";
+import type { ProceduralKind, SqliteProceduralStore } from "../memory/proceduralStore.js";
 
 export type Mode = "discuss" | "plan" | "interactive" | "bypass-approvals" | "auto-approve" | "custom";
 
@@ -166,6 +167,12 @@ export interface PermissionEngineOptions {
   writePathArgs?: Record<string, string>;
   /** Overrides `DEFAULT_PERSISTENT_AUTHORITY_TOOLS`. */
   persistentAuthorityTools?: string[];
+  /** Durable, cross-session standing rules (memory/proceduralStore.ts) — formalizes what a
+   * repeated "always allow" pattern means once it's been observed across enough distinct
+   * sessions to call it a real habit, not a one-off click. Workspace-scoped only for now (see
+   * that module's doc). Omit to run with no procedural memory at all, same as before this
+   * existed. */
+  proceduralMemory?: { store: SqliteProceduralStore; sessionId: string };
 }
 
 export class PermissionEngine implements PermissionEvaluator {
@@ -184,6 +191,7 @@ export class PermissionEngine implements PermissionEvaluator {
   private readonly targetArgFor?: (toolName: string) => string | undefined;
   private readonly writePathArgs: Record<string, string>;
   private readonly persistentAuthorityTools: Set<string>;
+  private readonly proceduralMemory?: { store: SqliteProceduralStore; sessionId: string };
 
   private readonly sessionAllowTools = new Set<string>();
   private readonly sessionAllowCommands = new Set<string>();
@@ -203,6 +211,7 @@ export class PermissionEngine implements PermissionEvaluator {
     this.targetArgFor = opts.targetArgFor;
     this.writePathArgs = { ...DEFAULT_WRITE_PATH_ARGS, ...(opts.writePathArgs ?? {}) };
     this.persistentAuthorityTools = new Set(opts.persistentAuthorityTools ?? DEFAULT_PERSISTENT_AUTHORITY_TOOLS);
+    this.proceduralMemory = opts.proceduralMemory;
   }
 
   // -- PermissionEvaluator -----------------------------------------------------------
@@ -288,6 +297,12 @@ export class PermissionEngine implements PermissionEvaluator {
     // the reviewer should see. The skipped checks fall through to `needsUser`, which routes
     // to the reviewer.
     const honorSessionGrants = this.mode !== "auto-approve";
+    // One read of durable standing rules per call — see memory/proceduralStore.ts's module
+    // doc for the promotion policy (only a grant observed across several distinct past
+    // sessions is honored here). Gated by the same honorSessionGrants flag as the in-memory
+    // session grants below: a promoted rule is subject to exactly the same "never bypass the
+    // reviewer in auto-approve mode" posture.
+    const procedural = honorSessionGrants ? this.proceduralLookup() : undefined;
 
     if (isShell) {
       const command = String(arguments_.command ?? "");
@@ -296,6 +311,10 @@ export class PermissionEngine implements PermissionEvaluator {
       }
       if (honorSessionGrants && command && this.sessionAllowCommands.has(command)) {
         return allow("command allowed for session");
+      }
+      if (command && procedural?.commands.has(command)) {
+        this.touchProcedural(procedural, "command", command);
+        return allow("command allowed by standing procedural memory", "procedural:command");
       }
       // Also a session grant: in auto-approve the reviewer judges these rather than the
       // classifier waving them through.
@@ -309,12 +328,23 @@ export class PermissionEngine implements PermissionEvaluator {
           return allow("read-only command (session grant)");
         }
       }
+      if (command && procedural?.readonlyRuleId !== undefined) {
+        if (isReadonlyCommand(command) && readTargets(command).every((t) => this.underRoot(t))) {
+          this.touchProcedural(procedural, "readonly", "");
+          return allow("read-only command (standing procedural memory)", "procedural:readonly");
+        }
+      }
     }
     if (isEgress) {
       const hasUrl = typeof arguments_.url === "string" && arguments_.url.length > 0;
       if (hasUrl) {
         if (this.domainAllowed(String(arguments_.url), honorSessionGrants)) {
           return allow("domain on allowlist");
+        }
+        const host = hostOf(String(arguments_.url));
+        if (host && procedural?.domains.has(host)) {
+          this.touchProcedural(procedural, "domain", host);
+          return allow("domain allowed by standing procedural memory", "procedural:domain");
         }
         // Falls through to `ask` below when the url isn't on the allowlist — a model-chosen
         // destination (web_fetch, browser_open_url) is exactly the SSRF-shaped case domain
@@ -332,6 +362,10 @@ export class PermissionEngine implements PermissionEvaluator {
     }
     if (honorSessionGrants && this.sessionAllowTools.has(toolName) && !isConnector) {
       return allow("tool allowed for session");
+    }
+    if (!isConnector && procedural?.tools.has(toolName)) {
+      this.touchProcedural(procedural, "tool", toolName);
+      return allow("tool allowed by standing procedural memory", "procedural:tool");
     }
 
     // Task-scoped standing rules: tool + exact target, owned by the automation. Deliberately
@@ -361,14 +395,18 @@ export class PermissionEngine implements PermissionEvaluator {
 
   allowToolForSession(toolName: string): void {
     this.sessionAllowTools.add(toolName);
+    this.observeProcedural("tool", toolName);
   }
 
   allowCommandForSession(command: string): void {
-    if (command) this.sessionAllowCommands.add(command);
+    if (!command) return;
+    this.sessionAllowCommands.add(command);
+    this.observeProcedural("command", command);
   }
 
   allowReadonlyForSession(): void {
     this.sessionReadonly = true;
+    this.observeProcedural("readonly", "");
   }
 
   /** Remember an egress destination for this session ("Always allow this domain"). A leading
@@ -379,7 +417,50 @@ export class PermissionEngine implements PermissionEvaluator {
   allowDomainForSession(urlOrDomain: string): void {
     let host = hostOf(urlOrDomain);
     if (host.startsWith("www.")) host = host.slice(4);
-    if (host) this.sessionAllowDomains.add(host);
+    if (!host) return;
+    this.sessionAllowDomains.add(host);
+    this.observeProcedural("domain", host);
+  }
+
+  // -- procedural memory ----------------------------------------------------------------
+
+  private observeProcedural(kind: ProceduralKind, value: string): void {
+    // Workspace-scoped only for now — see PermissionEngineOptions.proceduralMemory's doc.
+    this.proceduralMemory?.store.observe({
+      scope: "workspace",
+      workspace: this.workspaceRoot,
+      kind,
+      value,
+      sessionId: this.proceduralMemory.sessionId,
+    });
+  }
+
+  private proceduralLookup():
+    | { tools: Set<string>; commands: Set<string>; domains: Set<string>; readonlyRuleId?: number; idFor: Map<string, number> }
+    | undefined {
+    if (!this.proceduralMemory) return undefined;
+    const rules = this.proceduralMemory.store.listPromoted("workspace", this.workspaceRoot);
+    const lookup = { tools: new Set<string>(), commands: new Set<string>(), domains: new Set<string>(), readonlyRuleId: undefined as number | undefined, idFor: new Map<string, number>() };
+    for (const r of rules) {
+      if (r.kind === "tool") {
+        lookup.tools.add(r.value);
+        lookup.idFor.set(`tool:${r.value}`, r.id);
+      } else if (r.kind === "command") {
+        lookup.commands.add(r.value);
+        lookup.idFor.set(`command:${r.value}`, r.id);
+      } else if (r.kind === "domain") {
+        lookup.domains.add(r.value);
+        lookup.idFor.set(`domain:${r.value}`, r.id);
+      } else if (r.kind === "readonly") {
+        lookup.readonlyRuleId = r.id;
+      }
+    }
+    return lookup;
+  }
+
+  private touchProcedural(lookup: NonNullable<ReturnType<PermissionEngine["proceduralLookup"]>>, kind: string, value: string): void {
+    const id = kind === "readonly" ? lookup.readonlyRuleId : lookup.idFor.get(`${kind}:${value}`);
+    if (id !== undefined) this.proceduralMemory?.store.touch(id);
   }
 
   // -- helpers --------------------------------------------------------------------------

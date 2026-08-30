@@ -79,6 +79,40 @@ export interface MemoryItem {
   createdAt?: string;
 }
 
+/** Episodic memory — an auto-derived summary of a PAST session in this workspace, written by
+ * the agent itself (session.ts's summarizeUnsummarizedSessions), never by the user directly. */
+export interface EpisodicItem {
+  id: number;
+  workspace: string;
+  sessionId: string;
+  summary: string;
+  messageCount: number;
+  createdAt: string;
+}
+
+export type ProceduralKind = "tool" | "command" | "domain" | "readonly";
+
+/** Procedural memory — a durable standing permission rule, formalized from a repeated
+ * "always allow" pattern across several distinct past sessions (see
+ * @metaharn/engine/src/memory/proceduralStore.ts). `promoted: false` means it's still being
+ * observed and isn't honored yet — shown so a forming pattern is visible, not silent. */
+export interface ProceduralRule {
+  id: number;
+  scope: "global" | "workspace";
+  workspace?: string;
+  kind: ProceduralKind;
+  value: string;
+  observedSessions: number;
+  promoted: boolean;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface MemorySettings {
+  enabled: boolean;
+  userRules: string;
+}
+
 export interface McpServer {
   name: string;
   transport: "stdio" | "http";
@@ -363,6 +397,26 @@ export function addMemory(content: string, scope: MemoryScope, workspace?: strin
 
 export function deleteMemory(id: number): Promise<void> {
   return request(`/v1/memory/${id}`, { method: "DELETE" });
+}
+
+export function listEpisodicMemories(workspace: string): Promise<{ episodes: EpisodicItem[] }> {
+  return request(`/v1/memory/episodic?workspace=${encodeURIComponent(workspace)}`);
+}
+
+export function listProceduralRules(workspace: string): Promise<{ rules: ProceduralRule[] }> {
+  return request(`/v1/memory/procedural?workspace=${encodeURIComponent(workspace)}`);
+}
+
+export function revokeProceduralRule(id: number): Promise<{ ok: boolean }> {
+  return request(`/v1/memory/procedural/${id}`, { method: "DELETE" });
+}
+
+export function getMemorySettings(): Promise<MemorySettings> {
+  return request("/v1/memory/settings");
+}
+
+export function setMemorySettings(update: { enabled?: boolean; userRules?: string }): Promise<MemorySettings> {
+  return request("/v1/memory/settings", { method: "PUT", body: JSON.stringify(update) });
 }
 
 // -- Workspace trust (gates a workspace's own .metaharn/mcp.json) ------------------------

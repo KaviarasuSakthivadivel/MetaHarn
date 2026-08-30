@@ -29,6 +29,7 @@ If you've read agentic-coding-tool architecture docs before (Claude Code, Cursor
 | [`07-frontend.md`](07-frontend.md) | Renderer navigation model, component map, theming |
 | [`08-known-limitations.md`](08-known-limitations.md) | Open architectural gaps and tech debt — read this before extending the system |
 | [`09-owned-engine.md`](09-owned-engine.md) | `@metaharn/engine` — the second, MetaHarn-owned chat backend (providers, tools, permissions, memory, MCP, automation) and its two surfaces: Electron (`apps/desktop`) and the OpenWorker-shaped local server + web/Tauri UI (`apps/server`, `apps/web`) |
+| [`10-memory.md`](10-memory.md) | The owned engine's memory layer in depth: semantic/episodic/procedural tiers, write/retrieval/decay policy per tier, and how they wire into a session |
 
 ## Keeping this current
 
