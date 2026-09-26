@@ -168,7 +168,12 @@ interface RuntimeConfig {
 // `dev:full`'s concurrent launch and can permanently strand the page with an empty token.
 let configPromise: Promise<RuntimeConfig> | null = null;
 
-async function getConfig(): Promise<RuntimeConfig> {
+// `forceRefresh` bypasses the cached promise — needed because `tsx watch` rotates the token on
+// every server restart, which otherwise strands a page that already resolved `configPromise`
+// with the now-dead token (every request 401s until a manual reload). `request()` below uses
+// this to refetch once and retry on a 401 instead of leaving the page stuck.
+async function getConfig(forceRefresh = false): Promise<RuntimeConfig> {
+  if (forceRefresh) configPromise = null;
   if (!configPromise) {
     configPromise = (async () => {
       const maxAttempts = 15;
@@ -189,11 +194,19 @@ async function getConfig(): Promise<RuntimeConfig> {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const { token, serverUrl } = await getConfig();
-  const res = await fetch(`${serverUrl}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", "X-MetaHarn-Token": token, ...init.headers },
-  });
+  const doFetch = (token: string, serverUrl: string) =>
+    fetch(`${serverUrl}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", "X-MetaHarn-Token": token, ...init.headers },
+    });
+
+  let { token, serverUrl } = await getConfig();
+  let res = await doFetch(token, serverUrl);
+  if (res.status === 401) {
+    ({ token, serverUrl } = await getConfig(true));
+    res = await doFetch(token, serverUrl);
+  }
+
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) throw new Error(typeof body.error === "string" ? body.error : `request failed: ${res.status}`);
   return body as T;
