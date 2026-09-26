@@ -1,37 +1,45 @@
-@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
 
 :root {
-  --ink: #15141b;
-  --ink-soft: #201f2b;
-  --ink-softer: #2b2a38;
-  --paper: #ffffff;
-  --paper-dim: #f6f4ef;
-  --paper-dim-2: #efece3;
-  --line: #e7e3da;
-  --line-strong: #d8d3c6;
-  --text: #17161d;
-  --text-muted: #6f6c78;
+  --ink: #111217;
+  --ink-soft: #26262c;
+  --ink-softer: #313138;
+  --paper: #f7f7f8;
+  --paper-dim: #ffffff;
+  --paper-dim-2: #ececef;
+  --line: #e6e6e9;
+  --line-strong: #d6d6da;
+  --text: #16171c;
+  --text-muted: #6b6d76;
+  /* Text-on-dark tokens — kept as their original light values and no longer used by the
+     sidebar (now a light surface, see shell.css), but still needed as-is for the code
+     block's dark "terminal" surface, which stays dark regardless of the app theme. */
   --sidebar-fg: #f4f2ea;
   --sidebar-fg-dim: #9c99a8;
-  --accent: #ff5a1f;
-  --accent-strong: #e34c13;
-  --accent-soft: #ffe6d8;
-  --accent-ink: #2c1200;
+  --sidebar-bg: #ffffff;
+  --accent: #7c3aed;
+  --accent-strong: #6d28d9;
+  --accent-soft: #f2edfe;
+  /* Text painted on top of a solid --accent fill — white, since --accent is now a mid-dark
+     violet (unlike the old bright orange, dark text no longer has enough contrast here).
+     Text on --accent-soft's light tint uses --accent-strong instead, everywhere. */
+  --accent-ink: #ffffff;
   --good: #1f9d6c;
   --good-soft: #e2f6ec;
   --bad: #e5484d;
   --bad-soft: #fde4e4;
   --warn: #d97a0a;
   --warn-soft: #fbead2;
-  --radius-sm: 8px;
-  --radius: 14px;
-  --radius-lg: 20px;
-  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
-  --font-body: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --font-display: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
-  --shadow-sm: 0 1px 2px rgba(21, 20, 27, 0.06);
-  --shadow-md: 0 8px 24px rgba(21, 20, 27, 0.1);
-  --shadow-lg: 0 24px 64px rgba(21, 20, 27, 0.22);
+  --shadow-sm: 0 1px 2px rgba(16, 15, 20, 0.04);
+  --shadow-md: 0 8px 24px rgba(16, 15, 20, 0.08);
+  --shadow-lg: 0 24px 64px rgba(16, 15, 20, 0.16);
 }
 
 * {
@@ -71,7 +79,7 @@ textarea {
 
 ::selection {
   background: var(--accent-soft);
-  color: var(--accent-ink);
+  color: var(--accent-strong);
 }
 
 ::-webkit-scrollbar {
@@ -84,10 +92,6 @@ textarea {
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
-}
-
-.sidebar ::-webkit-scrollbar-thumb {
-  background: var(--ink-softer);
 }
 
 button:focus-visible,
