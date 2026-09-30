@@ -5,7 +5,7 @@
        previously this filled the full 1024 canvas edge-to-edge with no
        margin at all, which is exactly why it read visibly larger/bolder
        than every correctly-inset icon next to it in the Dock. -->
-  <rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4" fill="#FCEEE0"/>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4" fill="#F3EEFC"/>
 
   <!-- Concentric rings — abstract, not a literal fruit illustration. Reads
        as tree rings / growth, which ties to metaharn's actual etymology
@@ -14,10 +14,13 @@
        cross-section, a plain "D" monogram, a flatter whole-fruit-and-leaf,
        and a knowledge-graph node cluster) — see docs/architecture/07-frontend.md.
        Radii scaled by the same 824/1024 ratio as the squircle inset above,
-       so the composition is identical, just correctly sized within it. -->
-  <circle cx="512" cy="512" r="321" fill="#FFD9A8"/>
-  <circle cx="512" cy="512" r="247" fill="#FFB35C"/>
-  <circle cx="512" cy="512" r="177" fill="#F2823F"/>
-  <circle cx="512" cy="512" r="111" fill="#E0630F"/>
-  <circle cx="512" cy="512" r="49" fill="#A83D0C"/>
+       so the composition is identical, just correctly sized within it.
+       Recolored from the original orange ramp to the app's violet accent
+       (the accent/accent-strong tokens in apps/web/src/index.css) so the
+       Dock icon matches the reskinned UI instead of the old warm palette. -->
+  <circle cx="512" cy="512" r="321" fill="#DCC8FB"/>
+  <circle cx="512" cy="512" r="247" fill="#B48CF5"/>
+  <circle cx="512" cy="512" r="177" fill="#8B4FEA"/>
+  <circle cx="512" cy="512" r="111" fill="#6D28D9"/>
+  <circle cx="512" cy="512" r="49" fill="#3C1361"/>
 </svg>

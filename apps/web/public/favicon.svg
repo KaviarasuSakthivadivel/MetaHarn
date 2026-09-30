@@ -1,0 +1,8 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- Matches the in-app sidebar brand mark (.sidebar-brand-mark in shell.css): a violet
+       rounded square with a bold white "M". Kept as plain shapes rather than a <text> element
+       so it renders identically everywhere without depending on a font being loaded/available
+       at favicon-render time (browser tab favicons don't load webfonts). -->
+  <rect width="64" height="64" rx="16" fill="#7c3aed"/>
+  <path d="M16 46V18h6.2l9.8 15.2L41.8 18H48v28h-6.6V29.4L32.2 43h-0.4L22.6 29.5V46H16Z" fill="#ffffff"/>
+</svg>
