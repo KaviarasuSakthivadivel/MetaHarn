@@ -23,10 +23,12 @@ import ConfirmDialog from "./ConfirmDialog.js";
 import PermissionPrompt, { type PendingPermission } from "./PermissionPrompt.js";
 import SessionTreeView from "./SessionTreeView.js";
 import ContextWindowPanel from "./ContextWindowPanel.js";
+import UsageCostsModal from "./UsageCostsModal.js";
+import WeeklyRewindModal from "./WeeklyRewindModal.js";
 import GitPanel from "./GitPanel.js";
 import TerminalGrid from "./TerminalGrid.js";
 import AgentSwapMenu from "./AgentSwapMenu.js";
-import { BranchIcon, ClockIcon, DatabaseIcon, ForkIcon, GridIcon } from "./icons.js";
+import { BranchIcon, ClockIcon, CloseIcon, DatabaseIcon, ForkIcon, GridIcon } from "./icons.js";
 import { AGENT_DISPLAY_NAMES, formatAge, projectLabel, sessionTitle } from "./format.js";
 import { useSettings } from "./SettingsContext.js";
 import { renderMarkdown } from "./markdown.js";
@@ -104,7 +106,9 @@ type MainView =
   | { kind: "session"; cwd: string; sessionPath?: string }
   | { kind: "terminal"; cwd: string; terminalSessionId: string; resume: boolean }
   | { kind: "settings" }
-  | { kind: "inbox" };
+  | { kind: "inbox" }
+  | { kind: "usage" }
+  | { kind: "weeklyRewind" };
 
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_STORAGE_KEY = "metaharn:sidebarWidth";
@@ -171,6 +175,7 @@ export default function App() {
   const [showTerminalGrid, setShowTerminalGrid] = useState(false);
   const [gridSessionIds, setGridSessionIds] = useState<string[]>([]);
   const [gridCols, setGridCols] = useState(2);
+  const [gridRows, setGridRows] = useState(2);
 
   // The grid's own toggle button only lives in the terminal view's toolbar,
   // but showTerminalGrid itself is plain top-level state with no built-in
@@ -791,6 +796,18 @@ export default function App() {
    * shown" question deleting it does, so it gets the same
    * navigate-away-to-Overview answer.
    */
+  /** The underlying call is named renameTerminalSession (its original, only use was
+   * auto-titling a brand-new terminal session from its first input line — see
+   * titleTerminalSession above) but the DB update itself is a generic `sessions.title` write
+   * keyed by id, same column every session type's title/name already comes from (see
+   * catalog.ts's recordSession and listSessions) — safe and correct for a chat session's row
+   * too, not just a terminal one. */
+  const renameSession = (session: SessionListItem, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    void window.metaharn.renameTerminalSession(session.id, trimmed).then(refreshSessions);
+  };
+
   const archiveSession = (session: SessionListItem) => {
     const isTerminal = session.type === "terminal";
     setPendingConfirm({
@@ -1029,9 +1046,23 @@ export default function App() {
     const MAX_GRID_SESSIONS = 9;
     const ids = openTerminalTabs.map((t) => t.id).slice(0, MAX_GRID_SESSIONS);
     setGridSessionIds(ids);
+    // rows/cols are independently sized now (GridSizePicker), not auto-derived from the
+    // session count the way the old "Columns: 1 2 3 4, rows always ceil(n/cols)" control worked
+    // — without this, "Add all" would silently add sessions past whatever rows×cols happened to
+    // already be set and they'd just be invisible until the user manually resized the grid.
+    const cols = Math.max(1, Math.ceil(Math.sqrt(ids.length)));
+    setGridCols(cols);
+    setGridRows(Math.max(1, Math.ceil(ids.length / cols)));
   };
 
+  const addOneToGrid = (id: string) => setGridSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+
   const emptyGrid = () => setGridSessionIds([]);
+
+  const setGridSize = (rows: number, cols: number) => {
+    setGridRows(rows);
+    setGridCols(cols);
+  };
 
   const removeFromGrid = (id: string) => setGridSessionIds((prev) => prev.filter((x) => x !== id));
 
@@ -1179,6 +1210,10 @@ export default function App() {
         onOpenInbox={() => setView({ kind: "inbox" })}
         inboxActive={view.kind === "inbox"}
         pendingInboxCount={pendingInboxCount}
+        onOpenUsageCosts={() => setView({ kind: "usage" })}
+        usageActive={view.kind === "usage"}
+        onOpenWeeklyRewind={() => setView({ kind: "weeklyRewind" })}
+        weeklyRewindActive={view.kind === "weeklyRewind"}
       />
 
       <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
@@ -1203,7 +1238,9 @@ export default function App() {
             onSelectProject={selectProject}
             onOpenTerminal={quickOpenTerminal}
             onShowAllProjects={goToProjectsList}
+            onNewProject={newProject}
             onSelectSession={openSession}
+            onRenameSession={renameSession}
             onArchiveSession={archiveSession}
             onForkSession={forkSession}
             onCreateWorktreeSession={createWorktreeSession}
@@ -1273,6 +1310,13 @@ export default function App() {
         {view.kind === "inbox" && (
           <InboxPage sessions={sessions} onOpenSession={openSession} onCountChange={setPendingInboxCount} />
         )}
+        {/* Rendered inside <main>, same as every other page here (Settings/Inbox/ProjectsList)
+            — NOT a position:fixed full-viewport overlay like the first version of these two had,
+            which covered the sidebar and top bar too and made the whole window unusable while
+            open. Sidebar + TopBar stay live and clickable; "close" just goes back to goHome(),
+            same as clicking the brand mark. */}
+        {view.kind === "usage" && <UsageCostsModal onClose={goHome} />}
+        {view.kind === "weeklyRewind" && <WeeklyRewindModal onClose={goHome} />}
 
         {view.kind === "projectsList" && (
           <ProjectsListPage
@@ -1338,6 +1382,7 @@ export default function App() {
             <div style={{ flex: 1, minHeight: 0, display: view.tab === "overview" ? "block" : "none" }}>
               <ProjectOverview
                 cwd={view.cwd}
+                projectName={projects.find((p) => p.localPath === view.cwd)?.name}
                 sessions={sessions}
                 activeSessionPath={activeSessionPath}
                 installedAgents={installedAgents}
@@ -1347,6 +1392,7 @@ export default function App() {
                 onNewChatSession={() => newChatSession(view.cwd)}
                 onNewTerminalSession={(agentKind) => newTerminalSession(view.cwd, agentKind)}
                 onGoToSettings={() => setView({ kind: "settings" })}
+                onRenameSession={renameSession}
                 onArchiveSession={archiveSession}
                 onDeleteSession={deleteSession}
                 onResumeArchivedSession={resumeArchivedSession}
@@ -1666,7 +1712,7 @@ export default function App() {
                 justifyContent: "space-between",
                 gap: 10,
                 borderBottom: "1px solid var(--color-border)",
-                paddingBottom: 12,
+                paddingBottom: 14,
                 marginBottom: 16,
                 flexShrink: 0,
               }}
@@ -1674,24 +1720,32 @@ export default function App() {
               <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                 <button
                   onClick={() => backToProject(view.cwd)}
+                  className="metaharn-breadcrumb-link"
                   style={{
                     border: "none",
                     background: "transparent",
                     color: "var(--color-text-secondary)",
                     cursor: "pointer",
                     padding: 0,
-                    fontSize: 13,
+                    fontSize: 14,
                     flexShrink: 0,
                   }}
                 >
                   ← {projectLabel(view.cwd)}
                 </button>
                 <span style={{ color: "var(--color-text-muted)" }}>/</span>
-                <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <strong style={{ fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {currentTerminalSession ? sessionTitle(currentTerminalSession) : "New terminal session"}
                 </strong>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+              {/* Flat icon row, not a row of individually-bordered boxes — each button used to
+                  carry its own `border: 1px solid`, plus two vertical dividers splitting the row
+                  into clusters, which was "many borders, many lines" for what is, visually,
+                  still just one toolbar. A border now shows up ONLY on the agent-swap control
+                  (it reads as a dropdown/select, not a plain icon action, so a visible boundary
+                  actually earns its place there) and on hover/active, via .metaharn-icon-btn —
+                  everything else is borderless at rest, color/background alone carrying state. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
                 {currentTerminalSession && (
                   <div style={{ position: "relative" }}>
                     <button
@@ -1706,17 +1760,20 @@ export default function App() {
                           ? "Swapping — asking the current agent to summarize for handoff..."
                           : "Swap this session's agent"
                       }
+                      className="metaharn-icon-btn"
                       style={{
                         display: "flex",
                         alignItems: "center",
                         gap: 5,
+                        height: 30,
                         border: "1px solid var(--color-border)",
-                        borderRadius: 6,
+                        borderRadius: 9,
                         background: showAgentSwap ? "var(--color-bg-hover)" : "transparent",
                         color:
                           swappingSessionId === currentTerminalSession.id ? "var(--color-text-muted)" : "var(--color-text)",
                         cursor: swappingSessionId === currentTerminalSession.id ? "default" : "pointer",
-                        padding: "5px 10px",
+                        padding: "0 10px",
+                        marginRight: 6,
                         fontSize: 13,
                         fontFamily: '"IBM Plex Mono", Menlo, Monaco, monospace',
                       }}
@@ -1746,17 +1803,18 @@ export default function App() {
                   onClick={toggleContext}
                   disabled={!currentTerminalSession}
                   aria-label="Context window usage (estimated from the session transcript)"
-                  className="metaharn-tooltip"
+                  className="metaharn-icon-btn metaharn-tooltip"
                   style={{
                     display: "flex",
                     alignItems: "center",
                     gap: 5,
-                    border: "1px solid var(--color-border)",
-                    borderRadius: 6,
+                    height: 30,
+                    border: "none",
+                    borderRadius: 9,
                     background: showContext ? "var(--color-bg-hover)" : "transparent",
                     color: currentTerminalSession ? "var(--color-text)" : "var(--color-text-muted)",
                     cursor: currentTerminalSession ? "pointer" : "default",
-                    padding: "5px 10px",
+                    padding: "0 8px",
                     fontSize: 13,
                     fontFamily: '"IBM Plex Mono", Menlo, Monaco, monospace',
                   }}
@@ -1766,6 +1824,8 @@ export default function App() {
                     ? `${sessionStats.contextUsage.percent.toFixed(0)}%`
                     : "—"}
                 </button>
+                {/* Informational, not an action — no border/box, so it doesn't read as a
+                    clickable peer of the real buttons around it. */}
                 {currentTerminalSession && (
                   <span
                     title={`Created ${currentTerminalSession.created.toLocaleString()}`}
@@ -1773,10 +1833,8 @@ export default function App() {
                       display: "flex",
                       alignItems: "center",
                       gap: 5,
-                      border: "1px solid var(--color-border)",
-                      borderRadius: 6,
-                      color: "var(--color-text-secondary)",
-                      padding: "5px 10px",
+                      color: "var(--color-text-muted)",
+                      padding: "0 6px",
                       fontSize: 13,
                       fontFamily: '"IBM Plex Mono", Menlo, Monaco, monospace',
                     }}
@@ -1793,20 +1851,21 @@ export default function App() {
                       ? "Forking isn't supported for Gemini sessions yet"
                       : "Fork this session"
                   }
-                  className="metaharn-tooltip"
+                  className="metaharn-icon-btn metaharn-tooltip"
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: 6,
+                    justifyContent: "center",
+                    width: 30,
+                    height: 30,
+                    border: "none",
+                    borderRadius: 9,
                     background: "transparent",
                     color:
                       currentTerminalSession && currentTerminalSession.agentKind !== "gemini"
                         ? "var(--color-text)"
                         : "var(--color-text-muted)",
                     cursor: currentTerminalSession && currentTerminalSession.agentKind !== "gemini" ? "pointer" : "default",
-                    padding: "5px 8px",
-                    fontSize: 13,
                   }}
                 >
                   <ForkIcon size={14} />
@@ -1814,17 +1873,18 @@ export default function App() {
                 <button
                   onClick={toggleGitPanel}
                   aria-label="Git — changes, branches, log"
-                  className="metaharn-tooltip"
+                  className="metaharn-icon-btn metaharn-tooltip"
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: 6,
+                    justifyContent: "center",
+                    width: 30,
+                    height: 30,
+                    border: "none",
+                    borderRadius: 9,
                     background: showGitPanel ? "var(--color-bg-hover)" : "transparent",
                     color: "var(--color-text)",
                     cursor: "pointer",
-                    padding: "5px 8px",
-                    fontSize: 13,
                   }}
                 >
                   <BranchIcon size={14} />
@@ -1832,17 +1892,18 @@ export default function App() {
                 <button
                   onClick={toggleTerminalGrid}
                   aria-label="Session grid — view multiple terminals at once"
-                  className="metaharn-tooltip"
+                  className="metaharn-icon-btn metaharn-tooltip"
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: 6,
+                    justifyContent: "center",
+                    width: 30,
+                    height: 30,
+                    border: "none",
+                    borderRadius: 9,
                     background: showTerminalGrid ? "var(--color-bg-hover)" : "transparent",
                     color: "var(--color-text)",
                     cursor: "pointer",
-                    padding: "5px 8px",
-                    fontSize: 13,
                   }}
                 >
                   <GridIcon size={14} />
@@ -1851,21 +1912,22 @@ export default function App() {
                   onClick={() => currentTerminalSession && closeTerminalTab(currentTerminalSession.id)}
                   disabled={!currentTerminalSession}
                   aria-label="Close this tab (the session itself isn't deleted — reopen it from the sidebar anytime)"
-                  className="metaharn-tooltip"
+                  className="metaharn-icon-btn metaharn-tooltip"
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: 6,
+                    justifyContent: "center",
+                    width: 30,
+                    height: 30,
+                    border: "none",
+                    borderRadius: 9,
                     background: "transparent",
                     color: currentTerminalSession ? "var(--color-text)" : "var(--color-text-muted)",
                     cursor: currentTerminalSession ? "pointer" : "default",
-                    padding: "5px 8px",
-                    fontSize: 13,
-                    lineHeight: 1,
+                    marginLeft: 6,
                   }}
                 >
-                  ×
+                  <CloseIcon size={14} />
                 </button>
               </div>
             </div>
@@ -1900,13 +1962,16 @@ export default function App() {
               // agent instead of reattaching to whatever pty already
               // existed for this session id.
               key={`${id}:${generation}`}
+              // No border/shadow here (there was one briefly) — this is the single full-pane
+              // view with nothing adjacent to it, so a "card" boundary around it only ever
+              // framed empty terminal buffer, stacking with the toolbar above into exactly the
+              // "too many borders, too much dead space" a redesign was meant to fix, not cause.
+              // TerminalGrid.tsx's own per-pane wrapper keeps its border — there, several panes
+              // genuinely sit side by side and need a visible edge to tell them apart.
               style={{
                 display: isActive ? "block" : "none",
                 flex: 1,
                 minHeight: 0,
-                border: "1px solid var(--color-border)",
-                borderRadius: 8,
-                overflow: "hidden",
               }}
             >
               <TerminalPane
@@ -1933,9 +1998,12 @@ export default function App() {
             sessionIds={gridSessionIds.filter((id) => openTerminalTabs.some((t) => t.id === id))}
             openTerminalTabs={openTerminalTabs}
             sessions={sessions}
+            sessionStatuses={sessionStatuses}
+            rows={gridRows}
             cols={gridCols}
-            onColsChange={setGridCols}
+            onGridSizeChange={setGridSize}
             onAddAll={addAllToGrid}
+            onAddOne={addOneToGrid}
             onEmpty={emptyGrid}
             onRemove={removeFromGrid}
             onReorder={reorderGrid}

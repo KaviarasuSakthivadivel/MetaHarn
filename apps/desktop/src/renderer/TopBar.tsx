@@ -1,4 +1,4 @@
-import { AppMark } from "./icons.js";
+import { AppMark, BarChartIcon, BellIcon, DollarIcon, GearIcon, PlusIcon } from "./icons.js";
 
 // -webkit-app-region isn't in React's CSSProperties typings, but it's a
 // real, standard Electron/WebKit style property at runtime.
@@ -13,6 +13,10 @@ interface TopBarProps {
   onOpenInbox: () => void;
   inboxActive?: boolean;
   pendingInboxCount: number;
+  onOpenUsageCosts: () => void;
+  usageActive?: boolean;
+  onOpenWeeklyRewind: () => void;
+  weeklyRewindActive?: boolean;
 }
 
 export default function TopBar({
@@ -23,6 +27,10 @@ export default function TopBar({
   onOpenInbox,
   inboxActive,
   pendingInboxCount,
+  onOpenUsageCosts,
+  usageActive,
+  onOpenWeeklyRewind,
+  weeklyRewindActive,
 }: TopBarProps) {
   return (
     <header
@@ -45,6 +53,9 @@ export default function TopBar({
         padding: "0 12px 0 90px",
         borderBottom: "1px solid var(--color-border)",
         background: "var(--color-bg-secondary)",
+        boxShadow: "var(--shadow-sm)",
+        position: "relative",
+        zIndex: 1,
         ...dragRegion("drag"),
       }}
     >
@@ -71,41 +82,83 @@ export default function TopBar({
         </button>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8, ...dragRegion("no-drag") }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, ...dragRegion("no-drag") }}>
         <button
           onClick={onNewProject}
           aria-label="New project"
-          className="metaharn-tooltip"
+          className="metaharn-icon-btn metaharn-tooltip"
           style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
             border: "1px solid var(--color-border)",
-            borderRadius: 6,
+            borderRadius: 8,
             background: "transparent",
-            color: "var(--color-text)",
+            color: "var(--color-text-secondary)",
             cursor: "pointer",
-            width: 28,
-            height: 28,
-            lineHeight: 1,
+            width: 30,
+            height: 30,
           }}
         >
-          +
+          <PlusIcon size={15} />
+        </button>
+        <button
+          onClick={onOpenUsageCosts}
+          aria-label="Usage & Estimated Costs"
+          className="metaharn-icon-btn metaharn-tooltip"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            border: "1px solid var(--color-border)",
+            borderRadius: 8,
+            background: usageActive ? "var(--color-bg-hover)" : "transparent",
+            color: usageActive ? "var(--color-accent)" : "var(--color-text-secondary)",
+            cursor: "pointer",
+            width: 30,
+            height: 30,
+          }}
+        >
+          <DollarIcon size={15} />
+        </button>
+        <button
+          onClick={onOpenWeeklyRewind}
+          aria-label="Weekly Rewind"
+          className="metaharn-icon-btn metaharn-tooltip"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            border: "1px solid var(--color-border)",
+            borderRadius: 8,
+            background: weeklyRewindActive ? "var(--color-bg-hover)" : "transparent",
+            color: weeklyRewindActive ? "var(--color-accent)" : "var(--color-text-secondary)",
+            cursor: "pointer",
+            width: 30,
+            height: 30,
+          }}
+        >
+          <BarChartIcon size={15} />
         </button>
         <button
           onClick={onOpenInbox}
           aria-label="Inbox"
-          className="metaharn-tooltip"
+          className="metaharn-icon-btn metaharn-tooltip"
           style={{
             position: "relative",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
             border: "1px solid var(--color-border)",
-            borderRadius: 6,
+            borderRadius: 8,
             background: inboxActive ? "var(--color-bg-hover)" : "transparent",
-            color: "var(--color-text)",
+            color: inboxActive ? "var(--color-accent)" : "var(--color-text-secondary)",
             cursor: "pointer",
-            width: 28,
-            height: 28,
-            lineHeight: 1,
+            width: 30,
+            height: 30,
           }}
         >
-          🔔
+          <BellIcon size={15} />
           {pendingInboxCount > 0 && (
             <span
               style={{
@@ -122,6 +175,7 @@ export default function TopBar({
                 fontWeight: 700,
                 lineHeight: "15px",
                 textAlign: "center",
+                boxShadow: "0 0 0 2px var(--color-bg-secondary)",
               }}
             >
               {pendingInboxCount > 9 ? "9+" : pendingInboxCount}
@@ -131,19 +185,21 @@ export default function TopBar({
         <button
           onClick={onOpenSettings}
           aria-label="Settings"
-          className="metaharn-tooltip"
+          className="metaharn-icon-btn metaharn-tooltip"
           style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
             border: "1px solid var(--color-border)",
-            borderRadius: 6,
+            borderRadius: 8,
             background: settingsActive ? "var(--color-bg-hover)" : "transparent",
-            color: "var(--color-text)",
+            color: settingsActive ? "var(--color-accent)" : "var(--color-text-secondary)",
             cursor: "pointer",
-            width: 28,
-            height: 28,
-            lineHeight: 1,
+            width: 30,
+            height: 30,
           }}
         >
-          ⚙
+          <GearIcon size={15} />
         </button>
       </div>
     </header>

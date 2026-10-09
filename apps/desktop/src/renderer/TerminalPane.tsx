@@ -243,7 +243,10 @@ export default function TerminalPane({ cwd, terminalSessionId, onFirstInput, vis
     // margin inside one continuous terminal surface, not a mismatched frame
     // around it. fitAddon/ResizeObserver measure the INNER div, so they
     // already see the correctly-shrunk (post-padding) size for free — no
-    // resize-logic changes needed for this.
+    // resize-logic changes needed for this. No border/radius here — App.tsx
+    // and TerminalGrid.tsx already wrap every TerminalPane instance in their
+    // own bordered/rounded container; adding a second one here would nest a
+    // box inside that box instead of framing it once.
     <div style={{ width: "100%", height: "100%", padding: 12, boxSizing: "border-box", background: xtermTheme.background }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
     </div>
