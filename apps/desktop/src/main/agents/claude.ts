@@ -3,8 +3,9 @@ import path from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { HANDOFF_PROMPT, type AgentAdapter, type ForkResult, type LaunchOpts, type TerminalSessionStats } from "./types.js";
+import { HANDOFF_PROMPT, type AgentAdapter, type ForkResult, type LaunchOpts, type TerminalSessionStats, type UsageTurn } from "./types.js";
 import { shellQuote } from "./shell-quote.js";
+import { estimateCostUsd } from "../pricing.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -176,6 +177,43 @@ function getStats(cwd: string, externalId: string): TerminalSessionStats | null 
   };
 }
 
+/**
+ * One UsageTurn per assistant message that carries a usage block — the same transcript getStats
+ * above already reads, just emitted per-entry (with its own timestamp) instead of summed into
+ * one session-level total. A turn with no known pricing tier (estimateCostUsd returns null) is
+ * dropped, not zero-costed — see pricing.ts's own doc comment on why a silent 0 would
+ * under-report instead of honestly excluding it.
+ */
+function getUsageTurns(cwd: string, externalId: string): UsageTurn[] {
+  const filePath = sessionFilePath(cwd, externalId);
+  if (!existsSync(filePath)) return [];
+
+  const turns: UsageTurn[] = [];
+  for (const line of readFileSync(filePath, "utf-8").split("\n")) {
+    if (!line.trim()) continue;
+    let entry: TranscriptEntry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const usage = entry.message?.usage;
+    if (entry.type !== "assistant" || !usage || !entry.timestamp || !entry.message?.model) continue;
+
+    const tokens = {
+      input: usage.input_tokens ?? 0,
+      output: usage.output_tokens ?? 0,
+      cacheRead: usage.cache_read_input_tokens ?? 0,
+      cacheWrite: usage.cache_creation_input_tokens ?? 0,
+    };
+    const costUsd = estimateCostUsd(entry.message.model, tokens);
+    if (costUsd === null) continue;
+
+    turns.push({ timestamp: new Date(entry.timestamp), model: entry.message.model, costUsd, tokens });
+  }
+  return turns;
+}
+
 // Bounded well above the ~10s a real Codex equivalent took in testing —
 // generous, but a hung summarization must never hang the swap itself.
 const HANDOFF_TIMEOUT_MS = 45_000;
@@ -216,4 +254,5 @@ export const claudeAdapter: AgentAdapter = {
   summarizeForHandoff,
   forkSession: forkSessionFile,
   getStats,
+  getUsageTurns,
 };

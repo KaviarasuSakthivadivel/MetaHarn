@@ -275,6 +275,47 @@ export interface SessionStats {
   contextUsage?: ContextUsage;
 }
 
+/** Mirrors usage.ts's own DailyPoint/ModelBreakdown/UsageSummary/WeeklyRewind — kept decoupled
+ * from main's types on purpose, same convention as SessionStats above. */
+export interface DailyPoint {
+  date: string;
+  label: string;
+  costUsd: number;
+  tokens: number;
+  sessionCount: number;
+}
+export interface ModelBreakdown {
+  model: string;
+  costUsd: number;
+  turns: number;
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+}
+export interface UsageSummary {
+  todayCostUsd: number;
+  rangeCostUsd: number;
+  rangeTokens: number;
+  dailyCost: DailyPoint[];
+  byModel: ModelBreakdown[];
+  updatedAt: string;
+}
+export interface WeeklyRewind {
+  weekStart: string;
+  weekEnd: string;
+  agentTimeMinutes: number;
+  sessionCount: number;
+  costUsd: number;
+  peakWindowLabel: string | null;
+  peakWindowSessionCount: number;
+  topProjectName: string | null;
+  topProjectSessionCount: number;
+  busiestDayLabel: string | null;
+  busiestDaySessionCount: number;
+  sessionsByDay: DailyPoint[];
+  costByDay: DailyPoint[];
+  byModel: ModelBreakdown[];
+  heatmap: number[][];
+}
+
 const metaharnBridge = {
   init: (repoPath: string, resumeSessionPath?: string) =>
     ipcRenderer.invoke("metaharn:init", repoPath, resumeSessionPath),
@@ -379,6 +420,8 @@ const metaharnBridge = {
     ipcRenderer.invoke("metaharn:forkTerminalSession", cwd, sourceId, sourceTitle),
   getTerminalSessionStats: (cwd: string, sessionId: string): Promise<SessionStats | null> =>
     ipcRenderer.invoke("metaharn:getTerminalSessionStats", cwd, sessionId),
+  getUsageSummary: (rangeDays: 7 | 30 | 90): Promise<UsageSummary> => ipcRenderer.invoke("metaharn:getUsageSummary", rangeDays),
+  getWeeklyRewind: (weekStartIso?: string): Promise<WeeklyRewind> => ipcRenderer.invoke("metaharn:getWeeklyRewind", weekStartIso),
   removeProject: (repoId: string): Promise<void> => ipcRenderer.invoke("metaharn:removeProject", repoId),
   getProjectDeletionPreview: (repoId: string): Promise<ProjectDeletionPreview> =>
     ipcRenderer.invoke("metaharn:getProjectDeletionPreview", repoId),

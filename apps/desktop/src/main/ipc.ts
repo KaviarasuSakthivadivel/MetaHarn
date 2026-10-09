@@ -33,6 +33,7 @@ import type { Schedule } from "@metaharn/engine/src/automation/models.js";
 import { closePty, setPendingSeedPrompt } from "./pty-ipc.js";
 import { generateHandoffSummary } from "./agents/handoff.js";
 import { getTerminalSessionStats } from "./terminal-stats.js";
+import { getUsageSummary, getWeeklyRewind } from "./usage.js";
 import { detectInstalledAgents, getAdapter, resolveExternalSessionId } from "./agents/registry.js";
 import { getAllAgentStatuses, installAgent, uninstallAgent, upgradeAgent } from "./agents/lifecycle.js";
 import type { AgentKind } from "./agents/types.js";
@@ -310,6 +311,10 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle("metaharn:getAppInfo", () => ({ version: app.getVersion(), ...getModelConfig() }));
+
+  ipcMain.handle("metaharn:getUsageSummary", async (_event, rangeDays: 7 | 30 | 90) => getUsageSummary(rangeDays));
+
+  ipcMain.handle("metaharn:getWeeklyRewind", async (_event, weekStartIso: string | undefined) => getWeeklyRewind(weekStartIso));
 
   // -- Owned-engine Settings (Models/Memory/MCP/Automations) --------------------------------
   // Parity with apps/server's REST routes (see apps/server/src/index.ts) — same underlying

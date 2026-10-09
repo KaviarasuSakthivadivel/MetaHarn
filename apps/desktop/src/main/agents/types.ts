@@ -28,6 +28,18 @@ export interface TerminalSessionStats {
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
 }
 
+/** One billed turn (one assistant reply with a usage block), timestamped — the unit usage.ts's
+ * Weekly Rewind / Usage & Estimated Costs aggregation buckets by day/hour. Distinct from
+ * TerminalSessionStats above, which only ever returns a SESSION-level total: bucketing "cost
+ * this Thursday" or building an hour-of-day heatmap needs every individual turn's own time and
+ * cost, not just the sum. */
+export interface UsageTurn {
+  timestamp: Date;
+  model: string;
+  costUsd: number;
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+}
+
 export interface LaunchOpts {
   cwd: string;
   /** MetaHarn's own catalog row id for this terminal session. */
@@ -94,6 +106,14 @@ export interface AgentAdapter {
   /** Parses real usage stats from the CLI's own transcript file. Null when
    * there's nothing to read yet or the format can't be parsed. */
   getStats(cwd: string, externalId: string): TerminalSessionStats | null;
+
+  /** Every individual billed turn in this session, each with its own timestamp/model/cost —
+   * powers usage.ts's cross-session aggregation (Weekly Rewind, Usage & Estimated Costs).
+   * Optional: only implemented where real per-token pricing exists to compute costUsd from
+   * (currently Claude only — see pricing.ts's own doc comment on why the others aren't guessed
+   * at). Absent entirely, not a function returning [], for an adapter that hasn't implemented
+   * this yet — usage.ts skips it rather than reporting a false "$0, nothing happened here." */
+  getUsageTurns?(cwd: string, externalId: string): UsageTurn[];
 
   /**
    * Non-interactively asks THIS agent, resumed against its own real
