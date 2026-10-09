@@ -6,6 +6,14 @@ import { disposeSessionFor, registerIpcHandlers } from "./ipc.js";
 import { disposeAllPtysFor, registerPtyIpcHandlers } from "./pty-ipc.js";
 import { startAutomationRuntime, stopAutomationRuntime } from "./automation.js";
 
+// package.json's own productName ("MetaHarn") only applies to a PACKAGED build's Info.plist —
+// electron-forge start runs the raw Electron binary directly, which has no packaged Info.plist
+// to read a name from at all, so it falls back to its own binary name ("Electron") in the menu
+// bar/Dock tooltip/Cmd-Tab switcher the whole time you're in dev mode. Calling this explicitly,
+// as early as possible (before any other Electron API use), is the standard fix — same
+// correctly-themed Dock icon dev mode already gets via iconPath below, just for the app's name.
+app.setName("MetaHarn");
+
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
