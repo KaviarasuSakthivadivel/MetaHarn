@@ -9,8 +9,8 @@ import type {
   OwnedMemoryScope,
   OwnedProviderStatus,
 } from "../preload/preload.js";
-import { Row, Section, SegmentedControl, SPACE, TEXT } from "./ui.js";
-import { PlayIcon, TrashIcon } from "./icons.js";
+import { Row, SPACE, TEXT } from "./ui.js";
+import { ClockIcon, PlayIcon, PlugIcon, PlusIcon, TrashIcon } from "./icons.js";
 // Real vendor marks, not two-letter initials — see apps/web/src/Settings.tsx's identical import
 // block for why @lobehub/icons-static-svg specifically (MIT, built for AI-provider logos;
 // simple-icons was checked and rejected — no entry for OpenAI/Groq/xAI/Fireworks/Together) and
@@ -68,25 +68,22 @@ const MODEL_PLACEHOLDER: Record<string, string> = {
   xai: "grok-4",
 };
 
-type Tab = "general" | "models" | "memory" | "mcp" | "automations";
-
-const TABS: { value: Tab; label: string }[] = [
-  { value: "general", label: "General" },
-  { value: "models", label: "Models" },
-  { value: "memory", label: "Memory" },
-  { value: "mcp", label: "Connectors" },
-  { value: "automations", label: "Automations" },
-];
-
-function TextInput({ value, onChange, placeholder, type = "text", width }: { value: string; onChange: (v: string) => void; placeholder?: string; type?: string; width?: number }) {
+/** `grow: true` makes the field a flexible flex child (`flex-basis` = `width`, with a sane
+ * floor) instead of a fixed pixel box — ModelsPanel's per-provider field groups use this so an
+ * input shares leftover row width with its sibling button rather than forcing the row to
+ * overflow (see ProviderRow's own doc comment for the overflow bug this replaced). */
+function TextInput({ value, onChange, placeholder, type = "text", width, grow }: { value: string; onChange: (v: string) => void; placeholder?: string; type?: string; width?: number; grow?: boolean }) {
   return (
     <input
       type={type}
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
+      className="metaharn-focus-ring"
       style={{
-        width: width ?? 200,
+        width: grow ? undefined : (width ?? 200),
+        flex: grow ? `1 1 ${width ?? 140}px` : undefined,
+        minWidth: grow ? 110 : undefined,
         padding: "6px 10px",
         borderRadius: 6,
         border: "1px solid var(--color-border)",
@@ -199,6 +196,33 @@ function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; labe
   );
 }
 
+/** Small translucent status pill, reused across panels (Models' "Configured", Automations'
+ * "Active"/"Paused", MCP's "Trusted"/"Not trusted") instead of each inventing its own. `color`
+ * is a CSS color (usually a var) — "good" states pass the session-status "working" green
+ * (theme.css), the same hue ProjectsListPage's "● Active" pill already uses, rather than a new
+ * one; neutral states pass `--color-text-muted`. */
+function Pill({ color, children }: { color: string; children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        flexShrink: 0,
+        fontSize: 10.5,
+        fontWeight: 600,
+        color,
+        background: `color-mix(in srgb, ${color} 15%, transparent)`,
+        borderRadius: 5,
+        padding: "1px 7px",
+      }}
+    >
+      <span style={{ width: 5, height: 5, borderRadius: "50%", background: color, display: "inline-block" }} />
+      {children}
+    </span>
+  );
+}
+
 function EmptyRow({ children }: { children: React.ReactNode }) {
   return <div style={{ padding: `${SPACE.md}px ${SPACE.lg}px`, fontSize: TEXT.sm, color: "var(--color-text-muted)" }}>{children}</div>;
 }
@@ -209,7 +233,7 @@ function FormBar({ children }: { children: React.ReactNode }) {
 
 // -- General -------------------------------------------------------------------------------
 
-function GeneralPanel() {
+export function GeneralPanel() {
   const [settings, setSettings] = useState<OwnedGeneralSettings | null>(null);
 
   function refresh() {
@@ -241,10 +265,118 @@ function GeneralPanel() {
 
 // -- Models ------------------------------------------------------------------------------
 
-function ModelsPanel() {
+/** One provider as a collapsed, scannable row by default — icon, name, a "Configured" pill or
+ * "Not set up"/base-url subtitle, nothing else. The whole earlier design (both the cramped
+ * single-line version a screenshot caught overflowing, AND the "wrapping groups" fix that
+ * followed it) showed an API-key input box for every one of the ~10 providers at once, all the
+ * time — the real complaint a redesign needs to answer isn't "the boxes overlap," it's "why are
+ * there ten text boxes on screen when I'm here to set up one provider." So: collapsed by
+ * default, click a row to reveal ONLY that provider's key/model fields below it, click again (or
+ * open a different row) to close it. At most one text box per provider ever shows, and usually
+ * zero. */
+function ProviderRow({
+  provider,
+  expanded,
+  onToggle,
+  keyDraft,
+  modelDraft,
+  onKeyDraftChange,
+  onModelDraftChange,
+  onSaveKey,
+  onRemoveKey,
+  onSetDefaultModel,
+}: {
+  provider: OwnedProviderStatus;
+  expanded: boolean;
+  onToggle: () => void;
+  keyDraft: string;
+  modelDraft: string;
+  onKeyDraftChange: (v: string) => void;
+  onModelDraftChange: (v: string) => void;
+  onSaveKey: () => void;
+  onRemoveKey: () => void;
+  onSetDefaultModel: () => void;
+}) {
+  const p = provider;
+  return (
+    <div style={{ borderBottom: "1px solid var(--color-border)" }}>
+      <button
+        onClick={onToggle}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: SPACE.sm,
+          width: "100%",
+          textAlign: "left",
+          padding: `${SPACE.md}px ${SPACE.lg}px`,
+          border: "none",
+          background: "transparent",
+          color: "var(--color-text)",
+          cursor: "pointer",
+        }}
+      >
+        <ProviderIcon name={p.name} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: TEXT.base, fontWeight: 600 }}>{p.displayName}</span>
+            {p.configured && !p.noKeyNeeded && <Pill color="var(--color-status-working)">Configured</Pill>}
+          </div>
+          {(p.noKeyNeeded || !p.configured) && (
+            <div
+              style={{
+                fontSize: TEXT.sm,
+                color: "var(--color-text-muted)",
+                marginTop: 1,
+                fontFamily: p.noKeyNeeded ? MONO : undefined,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {p.noKeyNeeded ? p.baseUrl : "Not set up"}
+            </div>
+          )}
+        </div>
+        <span style={{ color: "var(--color-text-muted)", fontSize: 10, flexShrink: 0, transform: expanded ? "rotate(180deg)" : undefined, transition: "transform 0.12s ease" }}>▾</span>
+      </button>
+
+      {expanded && (
+        <div style={{ padding: `0 ${SPACE.lg}px ${SPACE.lg}px`, display: "flex", flexDirection: "column", gap: SPACE.sm }}>
+          {!p.noKeyNeeded && (
+            <div style={{ display: "flex", alignItems: "center", gap: SPACE.xs, flexWrap: "wrap" }}>
+              <TextInput type="password" placeholder={p.configured ? "•••••• (replace)" : "API key"} value={keyDraft} onChange={onKeyDraftChange} width={200} grow />
+              <SmallButton disabled={!keyDraft} onClick={onSaveKey}>
+                Save
+              </SmallButton>
+              {p.configured && (
+                <SmallButton danger onClick={onRemoveKey}>
+                  Remove
+                </SmallButton>
+              )}
+            </div>
+          )}
+          {p.configured && (
+            <div style={{ display: "flex", alignItems: "center", gap: SPACE.xs, flexWrap: "wrap" }}>
+              <TextInput placeholder={MODEL_PLACEHOLDER[p.name] ?? "model id"} value={modelDraft} onChange={onModelDraftChange} width={200} grow />
+              <SmallButton danger disabled={!modelDraft} onClick={onSetDefaultModel}>
+                Set default
+              </SmallButton>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ModelsPanel() {
   const [providers, setProviders] = useState<OwnedProviderStatus[] | null>(null);
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
   const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
+  // At most one provider's fields are visible at a time (accordion, not independent per-row
+  // toggles) — closing one before opening the next is what actually keeps the panel calm as the
+  // provider count grows, rather than just moving the clutter behind a click.
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   function refresh() {
     void window.metaharn.listOwnedProviders().then(setProviders);
@@ -255,43 +387,35 @@ function ModelsPanel() {
     <>
       {providers === null && <EmptyRow>Loading…</EmptyRow>}
       {providers?.map((p) => (
-        <ListRow key={p.name} title={p.displayName} sub={p.configured ? (p.noKeyNeeded ? p.baseUrl : "Configured") : "Not set up"} icon={<ProviderIcon name={p.name} />}>
-          {p.noKeyNeeded ? null : (
-            <>
-              <TextInput
-                type="password"
-                placeholder={p.configured ? "•••••• (replace)" : "API key"}
-                value={keyDrafts[p.name] ?? ""}
-                onChange={(v) => setKeyDrafts((d) => ({ ...d, [p.name]: v }))}
-                width={150}
-              />
-              <SmallButton
-                disabled={!keyDrafts[p.name]}
-                onClick={() =>
-                  void window.metaharn.setOwnedProvider(p.name, { apiKey: keyDrafts[p.name] }).then(() => {
-                    setKeyDrafts((d) => ({ ...d, [p.name]: "" }));
-                    refresh();
-                  })
-                }
-              >
-                Save
-              </SmallButton>
-              {p.configured && (
-                <SmallButton danger onClick={() => void window.metaharn.deleteOwnedProviderKey(p.name).then(refresh)}>
-                  Remove
-                </SmallButton>
-              )}
-            </>
-          )}
-          {p.configured && (
-            <>
-              <TextInput placeholder={MODEL_PLACEHOLDER[p.name] ?? "model id"} value={modelDrafts[p.name] ?? ""} onChange={(v) => setModelDrafts((d) => ({ ...d, [p.name]: v }))} width={160} />
-              <SmallButton danger disabled={!modelDrafts[p.name]} onClick={() => void window.metaharn.setOwnedDefaultModel(p.name, modelDrafts[p.name]).then(refresh)}>
-                Set default
-              </SmallButton>
-            </>
-          )}
-        </ListRow>
+        <ProviderRow
+          key={p.name}
+          provider={p}
+          expanded={expanded === p.name}
+          onToggle={() => setExpanded((cur) => (cur === p.name ? null : p.name))}
+          keyDraft={keyDrafts[p.name] ?? ""}
+          modelDraft={modelDrafts[p.name] ?? ""}
+          onKeyDraftChange={(v) => setKeyDrafts((d) => ({ ...d, [p.name]: v }))}
+          onModelDraftChange={(v) => setModelDrafts((d) => ({ ...d, [p.name]: v }))}
+          onSaveKey={() =>
+            void window.metaharn.setOwnedProvider(p.name, { apiKey: keyDrafts[p.name] }).then(() => {
+              setKeyDrafts((d) => ({ ...d, [p.name]: "" }));
+              setExpanded(null);
+              refresh();
+            })
+          }
+          onRemoveKey={() =>
+            void window.metaharn.deleteOwnedProviderKey(p.name).then(() => {
+              setExpanded(null);
+              refresh();
+            })
+          }
+          onSetDefaultModel={() =>
+            void window.metaharn.setOwnedDefaultModel(p.name, modelDrafts[p.name]).then(() => {
+              setExpanded(null);
+              refresh();
+            })
+          }
+        />
       ))}
     </>
   );
@@ -299,7 +423,7 @@ function ModelsPanel() {
 
 // -- Memory ------------------------------------------------------------------------------
 
-function MemoryPanel() {
+export function MemoryPanel() {
   const [memories, setMemories] = useState<OwnedMemoryItem[] | null>(null);
   const [content, setContent] = useState("");
   const [scope, setScope] = useState<OwnedMemoryScope>("global");
@@ -364,7 +488,7 @@ function WorkspaceTrustRow() {
       <div style={{ fontSize: TEXT.sm, color: "var(--color-text-secondary)", marginBottom: SPACE.sm }}>
         A workspace's own <code style={{ fontFamily: MONO }}>.metaharn/mcp.json</code> only loads once you trust that path — check or grant trust here.
       </div>
-      <div style={{ display: "flex", gap: SPACE.sm }}>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm, flexWrap: "wrap" }}>
         <TextInput
           value={workspace}
           onChange={(v) => {
@@ -372,11 +496,12 @@ function WorkspaceTrustRow() {
             check(v);
           }}
           placeholder="Workspace path"
-          width={300}
+          width={280}
+          grow
         />
         {trusted !== null && (
           <>
-            <span style={{ fontSize: TEXT.base, alignSelf: "center", color: trusted ? "var(--color-accent)" : "var(--color-text-muted)" }}>{trusted ? "Trusted" : "Not trusted"}</span>
+            {trusted ? <Pill color="var(--color-status-working)">Trusted</Pill> : <Pill color="var(--color-text-muted)">Not trusted</Pill>}
             <SmallButton
               danger={trusted}
               onClick={() =>
@@ -509,6 +634,7 @@ function AddConnectorModal({ onClose, onSaved }: { onClose: () => void; onSaved:
                 placeholder="Optional headers, one per line — Authorization: Bearer sk-..."
                 value={headersText}
                 onChange={(e) => setHeadersText(e.target.value)}
+                className="metaharn-focus-ring"
                 style={{ width: 440, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--color-border)", background: "var(--color-bg)", color: "var(--color-text)", fontSize: TEXT.base, fontFamily: MONO }}
               />
             </>
@@ -525,6 +651,7 @@ function AddConnectorModal({ onClose, onSaved }: { onClose: () => void; onSaved:
               placeholder={'{\n  "mcpServers": {\n    "my-server": { "command": "npx", "args": ["-y", "some-mcp-server"] }\n  }\n}'}
               value={json}
               onChange={(e) => setJson(e.target.value)}
+              className="metaharn-focus-ring"
               style={{ width: 440, padding: 10, borderRadius: 8, border: "1px solid var(--color-border)", background: "var(--color-bg)", color: "var(--color-text)", fontSize: 12.5, fontFamily: MONO }}
             />
           )}
@@ -560,7 +687,7 @@ function AddConnectorModal({ onClose, onSaved }: { onClose: () => void; onSaved:
   );
 }
 
-function McpPanel() {
+export function McpPanel() {
   const [servers, setServers] = useState<OwnedMcpServer[] | null>(null);
   const [showModal, setShowModal] = useState(false);
 
@@ -573,11 +700,15 @@ function McpPanel() {
     <>
       <WorkspaceTrustRow />
       <div style={{ padding: SPACE.lg, borderBottom: "1px solid var(--color-border)" }}>
-        <SmallButton onClick={() => setShowModal(true)}>+ Add custom connector</SmallButton>
+        <SmallButton onClick={() => setShowModal(true)}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <PlusIcon size={12} /> Add custom connector
+          </span>
+        </SmallButton>
       </div>
-      {servers?.length === 0 && <EmptyRow>No connectors yet.</EmptyRow>}
+      {servers?.length === 0 && <EmptyRow>No connectors yet — add one above, or point a workspace at its own trusted mcp.json.</EmptyRow>}
       {servers?.map((s) => (
-        <ListRow key={s.name} title={s.name} sub={s.transport === "http" ? s.url : `${s.command} ${s.args.join(" ")}`}>
+        <ListRow key={s.name} title={s.name} sub={s.transport === "http" ? s.url : `${s.command} ${s.args.join(" ")}`} icon={<PlugIcon size={16} />}>
           <IconButton danger label="Remove connector" onClick={() => void window.metaharn.deleteOwnedMcpServer(s.name).then(refresh)}>
             <TrashIcon size={14} />
           </IconButton>
@@ -598,9 +729,104 @@ function McpPanel() {
 
 // -- Automations -------------------------------------------------------------------------
 
-function AutomationsPanel() {
+/** Same "hidden until requested" shape as AddConnectorModal — the previous version kept 4
+ * always-visible fields (Title / Workspace / Cron / Instructions) permanently open above the
+ * list, the exact clutter pattern the Models panel got called out for, just with a form instead
+ * of 10 repeated key inputs. Stacked fields here too (not cramped side by side at 180/260/110px,
+ * which left "Cron" too narrow to read what you typed), with the cron field's own example/help
+ * text since it's the one input here with a format a user might not already know. */
+function AddAutomationModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [title, setTitle] = useState("");
+  const [workspace, setWorkspace] = useState("");
+  const [cron, setCron] = useState("0 9 * * *");
+  const [instructions, setInstructions] = useState("");
+
+  const canCreate = title.trim() && workspace.trim() && instructions.trim();
+
+  function create() {
+    if (!canCreate) return;
+    const schedule: OwnedAutomationSchedule = { kind: "cron", cron, fireAt: null, timezone: "local" };
+    void window.metaharn.createOwnedAutomation({ title: title.trim(), instructions: instructions.trim(), workspace: workspace.trim(), schedule }).then(onSaved);
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--color-bg-elevated)", border: "1px solid var(--color-border)", borderRadius: 10, padding: 20, width: 460, boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
+        <div style={{ fontSize: TEXT.lg, fontWeight: 600, marginBottom: 14 }}>New automation</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <TextInput value={title} onChange={setTitle} placeholder="Title" width={420} />
+          <TextInput value={workspace} onChange={setWorkspace} placeholder="Workspace path" width={420} />
+          <div>
+            <TextInput value={cron} onChange={setCron} placeholder="Cron" width={420} />
+            <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 4, fontFamily: MONO }}>e.g. "0 9 * * *" — every day at 9am, local time</div>
+          </div>
+          <textarea
+            rows={4}
+            placeholder="Instructions for the agent…"
+            value={instructions}
+            onChange={(e) => setInstructions(e.target.value)}
+            className="metaharn-focus-ring"
+            style={{ width: 420, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--color-border)", background: "var(--color-bg)", color: "var(--color-text)", fontSize: TEXT.base, fontFamily: "inherit", resize: "vertical" }}
+          />
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button onClick={onClose} style={{ border: "1px solid var(--color-border)", borderRadius: 6, background: "transparent", color: "var(--color-text)", cursor: "pointer", padding: "6px 14px" }}>
+            Cancel
+          </button>
+          <SmallButton disabled={!canCreate} onClick={create}>
+            Create
+          </SmallButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AutomationRow({
+  automation,
+  onRunNow,
+  onToggle,
+  onDelete,
+}: {
+  automation: OwnedAutomation;
+  onRunNow: () => void;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  const t = automation;
+  return (
+    <div
+      className="metaharn-list-row"
+      style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: `${SPACE.md}px ${SPACE.lg}px`, borderBottom: "1px solid var(--color-border)", gap: SPACE.md }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm, minWidth: 0 }}>
+        <ClockIcon size={16} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: TEXT.base, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</span>
+            {t.enabled ? <Pill color="var(--color-status-working)">Active</Pill> : <Pill color="var(--color-text-muted)">Paused</Pill>}
+          </div>
+          <div style={{ fontSize: TEXT.sm, color: "var(--color-text-secondary)", marginTop: 2, fontFamily: MONO, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {t.schedule} · {t.runCount} run{t.runCount === 1 ? "" : "s"}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: SPACE.xs, flexShrink: 0, alignItems: "center" }}>
+        <IconButton label="Run now" onClick={onRunNow}>
+          <PlayIcon size={13} />
+        </IconButton>
+        <Toggle on={t.enabled} label={t.enabled ? "Pause automation" : "Resume automation"} onClick={onToggle} />
+        <IconButton danger label="Delete automation" onClick={onDelete}>
+          <TrashIcon size={14} />
+        </IconButton>
+      </div>
+    </div>
+  );
+}
+
+export function AutomationsPanel() {
   const [tasks, setTasks] = useState<OwnedAutomation[] | null>(null);
-  const [form, setForm] = useState({ title: "", instructions: "", workspace: "", cron: "0 9 * * *" });
+  const [showModal, setShowModal] = useState(false);
 
   function refresh() {
     void window.metaharn.listOwnedAutomations().then(setTasks);
@@ -609,63 +835,40 @@ function AutomationsPanel() {
 
   return (
     <>
-      <div style={{ padding: SPACE.lg, borderBottom: "1px solid var(--color-border)", display: "flex", flexDirection: "column", gap: SPACE.sm }}>
-        <div style={{ display: "flex", gap: SPACE.sm }}>
-          <TextInput value={form.title} onChange={(v) => setForm({ ...form, title: v })} placeholder="Title" width={180} />
-          <TextInput value={form.workspace} onChange={(v) => setForm({ ...form, workspace: v })} placeholder="Workspace path" width={260} />
-          <TextInput value={form.cron} onChange={(v) => setForm({ ...form, cron: v })} placeholder="Cron" width={110} />
-        </div>
-        <div style={{ display: "flex", gap: SPACE.sm }}>
-          <TextInput value={form.instructions} onChange={(v) => setForm({ ...form, instructions: v })} placeholder="Instructions for the agent…" width={460} />
-          <SmallButton
-            disabled={!form.title.trim() || !form.instructions.trim() || !form.workspace.trim()}
-            onClick={() => {
-              const schedule: OwnedAutomationSchedule = { kind: "cron", cron: form.cron, fireAt: null, timezone: "local" };
-              void window.metaharn.createOwnedAutomation({ title: form.title, instructions: form.instructions, workspace: form.workspace, schedule }).then(() => {
-                setForm({ title: "", instructions: "", workspace: "", cron: "0 9 * * *" });
-                refresh();
-              });
-            }}
-          >
-            Create
-          </SmallButton>
-        </div>
+      <div style={{ padding: SPACE.lg, borderBottom: "1px solid var(--color-border)" }}>
+        <SmallButton onClick={() => setShowModal(true)}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <PlusIcon size={12} /> New automation
+          </span>
+        </SmallButton>
       </div>
-      {tasks?.length === 0 && <EmptyRow>No automations yet.</EmptyRow>}
+      {tasks?.length === 0 && <EmptyRow>No automations yet — add one above to run the agent on a schedule.</EmptyRow>}
       {tasks?.map((t) => (
-        <ListRow key={t.id} title={t.title} sub={`${t.schedule} · ${t.runCount} run${t.runCount === 1 ? "" : "s"}`}>
-          <IconButton label="Run now" onClick={() => void window.metaharn.runOwnedAutomationNow(t.id).then(refresh)}>
-            <PlayIcon size={13} />
-          </IconButton>
-          <Toggle
-            on={t.enabled}
-            label={t.enabled ? "Pause automation" : "Resume automation"}
-            onClick={() => void window.metaharn.setOwnedAutomationEnabled(t.id, !t.enabled).then(refresh)}
-          />
-          <IconButton danger label="Delete automation" onClick={() => void window.metaharn.deleteOwnedAutomation(t.id).then(refresh)}>
-            <TrashIcon size={14} />
-          </IconButton>
-        </ListRow>
+        <AutomationRow
+          key={t.id}
+          automation={t}
+          onRunNow={() => void window.metaharn.runOwnedAutomationNow(t.id).then(refresh)}
+          onToggle={() => void window.metaharn.setOwnedAutomationEnabled(t.id, !t.enabled).then(refresh)}
+          onDelete={() => void window.metaharn.deleteOwnedAutomation(t.id).then(refresh)}
+        />
       ))}
+      {showModal && (
+        <AddAutomationModal
+          onClose={() => setShowModal(false)}
+          onSaved={() => {
+            setShowModal(false);
+            refresh();
+          }}
+        />
+      )}
     </>
   );
 }
 
-// -- Root: one Section, tabbed inside it — mirrors apps/web/src/Settings.tsx's grouping
-// (General / Models / Memory / MCP servers / Automations) instead of five separate cards. --
-
-export default function OwnedEngineSettings() {
-  const [tab, setTab] = useState<Tab>("general");
-  return (
-    <Section title="Owned Engine">
-      <div style={{ padding: `${SPACE.sm}px ${SPACE.lg}px`, borderBottom: "1px solid var(--color-border)" }}>
-        <SegmentedControl options={TABS} value={tab} onChange={setTab} />
-      </div>
-      {tab === "general" && <GeneralPanel />}
-      {tab === "models" && <ModelsPanel />}
-      {tab === "memory" && <MemoryPanel />}
-      {tab === "mcp" && <McpPanel />}
-      {tab === "automations" && <AutomationsPanel />}
-    </Section>
-  );
-}
+// Each panel above (GeneralPanel / ModelsPanel / MemoryPanel / McpPanel / AutomationsPanel) is
+// its own named export — SettingsPage.tsx's left-nav sidebar hosts them directly as top-level
+// destinations now, grouped under "Owned Engine", instead of this file owning a second tab bar
+// nested inside one of SettingsPage's own Sections (where it read as subordinate to things like
+// "Agent CLIs" even though it's a peer in scope). Mirrors apps/web/src/Settings.tsx's grouping
+// (General / Models / Memory / MCP servers / Automations), just surfaced via the shared nav
+// instead of a local SegmentedControl.
