@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { SessionDependency, ProjectListItem, SessionListItem, WorktreeLink } from "../preload/preload.js";
 import { AGENT_DISPLAY_NAMES, computeProjectStats, formatRelativeTime, projectLabel, sessionTitle } from "./format.js";
 import { Eyebrow, RADIUS, SPACE, TEXT } from "./ui.js";
-import { ArchiveIcon, ClockIcon, ForkIcon, GripIcon, LinkIcon, MapIcon, PlusIcon, WorktreeIcon } from "./icons.js";
+import { ArchiveIcon, ClockIcon, EditIcon, FolderIcon, ForkIcon, GripIcon, LinkIcon, MapIcon, PlusIcon, WorktreeIcon } from "./icons.js";
 import DependencyMenu from "./DependencyMenu.js";
 import MinimapPanel from "./MinimapPanel.js";
 
@@ -25,7 +25,10 @@ interface SidebarProps {
   onSelectProject: (cwd: string) => void;
   onOpenTerminal: (cwd: string) => void;
   onShowAllProjects: () => void;
+  /** The Projects tab's own "+ Add project" row — same action as TopBar's "+" button. */
+  onNewProject: () => void;
   onSelectSession: (session: SessionListItem) => void;
+  onRenameSession: (session: SessionListItem, title: string) => void;
   /** Reversible — hides the session from the normal list without touching
    * its real file/pty (see catalog.ts's archiveSession doc comment).
    * Permanent deletion isn't reachable from this card anymore; it lives in
@@ -40,18 +43,16 @@ interface SidebarProps {
 const MAX_GROUPS = 8;
 
 /**
- * One persistent sidebar: sessions grouped directly under their project, no
- * separate "Projects" list above a separate "Sessions" list — a
- * fleet-view-style sidebar (project name as a collapsible group header,
- * sessions inside as real elevated cards), which turned out to be
- * a materially better fit than this file's earlier two-stacked-sections
- * layout: a project *is* the thing sessions belong to, not a separate
- * navigation surface competing with them for space.
- *
- * Scoping ("this project" vs "all projects") controls how many groups
- * render — one (the active project) vs up to MAX_GROUPS, most-recent
- * first — rather than which of two sections is expanded, since there's
- * only one kind of section now.
+ * A two-tab sidebar: "Sessions" (the fleet-view grouped list — project name as a collapsible
+ * group header, sessions inside as real elevated cards, each group showing only what it's
+ * working on) and "Projects" (a flat, lightweight navigator — just names, for jumping straight
+ * to a project's own Overview page without wading through everyone's live sessions to find it).
+ * An earlier revision of this file merged these into ONE always-grouped view and dropped the
+ * separate Projects list entirely, reasoning that a project IS the thing sessions belong to, not
+ * a competing nav surface — true for "what's running right now," but it left no fast path to "I
+ * just want project N," which is what brought the tabs back. Scoping ("this project" vs "all
+ * projects") still only matters inside the Sessions tab — it controls how many groups render,
+ * one vs up to MAX_GROUPS — since the Projects tab is already exactly one list of everything.
  */
 export default function Sidebar({
   projects,
@@ -64,22 +65,19 @@ export default function Sidebar({
   onSelectProject,
   onOpenTerminal,
   onShowAllProjects,
+  onNewProject,
   onSelectSession,
+  onRenameSession,
   onArchiveSession,
   onForkSession,
   onCreateWorktreeSession,
   onSetDependency,
   onRemoveDependency,
 }: SidebarProps) {
-  const [showAllProjects, setShowAllProjects] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<"sessions" | "projects">("sessions");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [dependencyMenuFor, setDependencyMenuFor] = useState<{ session: SessionListItem; anchorRect: DOMRect } | null>(null);
   const [minimapAnchor, setMinimapAnchor] = useState<DOMRect | null>(null);
-
-  // No project to scope to (e.g. the projects-list landing page) means
-  // there's nothing meaningful "just this project" could mean — auto-expand
-  // to every group rather than showing nothing.
-  const effectiveShowAll = showAllProjects || !activeCwd;
 
   // A worktree checkout's sessions render under its PARENT's group, not
   // their own — effectiveCwd() is the one place that resolution happens;
@@ -98,9 +96,10 @@ export default function Sidebar({
     return a.name.localeCompare(b.name);
   });
 
-  const groupProjects = effectiveShowAll
-    ? sortedProjects.slice(0, MAX_GROUPS)
-    : sortedProjects.filter((p) => p.localPath === activeCwd);
+  // Always every project, most-recent-first, up to MAX_GROUPS — the earlier "this project" vs
+  // "all projects" scope toggle is gone: this tab's whole job is "what's running across
+  // everything," and the Projects tab next to it already covers "just take me to project N."
+  const groupProjects = sortedProjects.slice(0, MAX_GROUPS);
   // A session whose project got un-registered (removed) but whose row
   // still exists shouldn't just vanish — synthesize a minimal group for it
   // the same way the old GroupedSessionList already did (projectLabel(cwd)
@@ -113,11 +112,7 @@ export default function Sidebar({
   // so it doesn't ALSO get a spurious orphan group alongside showing up
   // correctly merged into its parent's.
   const registeredCwds = new Set(projects.map((p) => p.localPath));
-  const orphanCwds = effectiveShowAll
-    ? [...new Set(sessions.map((s) => s.cwd))].filter((cwd) => !registeredCwds.has(cwd) && !worktreeParentByCwd.has(cwd))
-    : activeCwd && !registeredCwds.has(activeCwd) && !worktreeParentByCwd.has(activeCwd)
-      ? [activeCwd]
-      : [];
+  const orphanCwds = [...new Set(sessions.map((s) => s.cwd))].filter((cwd) => !registeredCwds.has(cwd) && !worktreeParentByCwd.has(cwd));
 
   const canFork = (session: SessionListItem) => session.type === "terminal" || session.path === activeSessionPath;
   const openDependencyMenu = (session: SessionListItem, anchorRect: DOMRect) => setDependencyMenuFor({ session, anchorRect });
@@ -139,6 +134,7 @@ export default function Sidebar({
     onSelectProject,
     onOpenTerminal,
     onSelectSession,
+    onRenameSession,
     onArchiveSession,
     onForkSession,
     canFork,
@@ -155,93 +151,97 @@ export default function Sidebar({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: `${SPACE.sm}px ${SPACE.md}px`,
+          padding: `0 ${SPACE.md}px`,
           borderBottom: "1px solid var(--color-border)",
           flexShrink: 0,
         }}
       >
-        <Eyebrow>Sessions</Eyebrow>
-        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <button
-            onClick={(e) => setMinimapAnchor(e.currentTarget.getBoundingClientRect())}
-            aria-label="Session dependency minimap"
-            className="metaharn-icon-btn metaharn-tooltip"
-            style={{
-              display: "flex",
-              border: "none",
-              background: "transparent",
-              color: "var(--color-text-muted)",
-              cursor: "pointer",
-              padding: 4,
-              borderRadius: RADIUS.sm,
-            }}
-          >
-            <MapIcon size={13} />
-          </button>
-          {activeCwd && (
+        <div style={{ display: "flex", alignItems: "center", gap: SPACE.lg }}>
+          <TabButton active={sidebarTab === "sessions"} onClick={() => setSidebarTab("sessions")} count={sessions.length}>
+            Sessions
+          </TabButton>
+          <TabButton active={sidebarTab === "projects"} onClick={() => setSidebarTab("projects")}>
+            Projects
+          </TabButton>
+        </div>
+        {sidebarTab === "sessions" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
             <button
-              onClick={() => setShowAllProjects((v) => !v)}
-              title={effectiveShowAll ? "Show only this project's sessions" : "Show sessions from every project"}
+              onClick={(e) => setMinimapAnchor(e.currentTarget.getBoundingClientRect())}
+              aria-label="Session dependency minimap"
+              className="metaharn-icon-btn metaharn-tooltip"
               style={{
+                display: "flex",
                 border: "none",
                 background: "transparent",
                 color: "var(--color-text-muted)",
                 cursor: "pointer",
-                fontSize: TEXT.xs,
-                padding: "2px 4px",
+                padding: 4,
+                borderRadius: RADIUS.sm,
               }}
             >
-              {effectiveShowAll ? "all projects" : "this project"}
+              <MapIcon size={13} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {sidebarTab === "sessions" ? (
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: `${SPACE.sm}px 0` }}>
+          {!hasAnyGroups && (
+            <p style={{ padding: `0 ${SPACE.md}px`, color: "var(--color-text-muted)", fontSize: TEXT.base }}>
+              {projects.length === 0 ? "No projects yet." : "No sessions yet."}
+            </p>
+          )}
+          {groupProjects.map((project) => (
+            <ProjectGroup
+              key={project.id}
+              cwd={project.localPath}
+              name={project.name}
+              sessions={sessions.filter((s) => effectiveCwd(s.cwd) === project.localPath)}
+              {...sharedGroupProps}
+            />
+          ))}
+          {orphanCwds.map((cwd) => (
+            <ProjectGroup
+              key={cwd}
+              cwd={cwd}
+              name={projectLabel(cwd)}
+              sessions={sessions.filter((s) => s.cwd === cwd)}
+              unregistered
+              {...sharedGroupProps}
+            />
+          ))}
+          {projects.length > 0 && (
+            <button
+              onClick={onShowAllProjects}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: `${SPACE.xs + 2}px ${SPACE.md}px`,
+                marginTop: SPACE.xs,
+                border: "none",
+                background: "transparent",
+                color: "var(--color-text-muted)",
+                cursor: "pointer",
+                fontSize: TEXT.sm,
+              }}
+            >
+              Browse all projects →
             </button>
           )}
         </div>
-      </div>
-
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: `${SPACE.sm}px 0` }}>
-        {!hasAnyGroups && (
-          <p style={{ padding: `0 ${SPACE.md}px`, color: "var(--color-text-muted)", fontSize: TEXT.base }}>
-            {projects.length === 0 ? "No projects yet." : "No sessions yet."}
-          </p>
-        )}
-        {groupProjects.map((project) => (
-          <ProjectGroup
-            key={project.id}
-            cwd={project.localPath}
-            name={project.name}
-            sessions={sessions.filter((s) => effectiveCwd(s.cwd) === project.localPath)}
-            {...sharedGroupProps}
-          />
-        ))}
-        {orphanCwds.map((cwd) => (
-          <ProjectGroup
-            key={cwd}
-            cwd={cwd}
-            name={projectLabel(cwd)}
-            sessions={sessions.filter((s) => s.cwd === cwd)}
-            unregistered
-            {...sharedGroupProps}
-          />
-        ))}
-        {projects.length > 0 && (
-          <button
-            onClick={onShowAllProjects}
-            style={{
-              display: "block",
-              width: "100%",
-              textAlign: "left",
-              padding: `${SPACE.xs + 2}px ${SPACE.md}px`,
-              marginTop: SPACE.xs,
-              border: "none",
-              background: "transparent",
-              color: "var(--color-text-muted)",
-              cursor: "pointer",
-              fontSize: TEXT.sm,
-            }}
-          >
-            Browse all projects →
-          </button>
-        )}
-      </div>
+      ) : (
+        <ProjectsFlatList
+          projects={sortedProjects}
+          projectStats={projectStats}
+          activeCwd={activeCwd}
+          onSelectProject={onSelectProject}
+          onNewProject={onNewProject}
+          onShowAllProjects={onShowAllProjects}
+        />
+      )}
 
       {dependencyMenuFor && (
         <DependencyMenu
@@ -263,6 +263,155 @@ export default function Sidebar({
           onClose={() => setMinimapAnchor(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** Sessions/Projects — underline-on-active, like the Overview/Files tabs App.tsx already
+ * renders per-project, just horizontally adjacent instead of a single row (there are two of
+ * them, side by side, not a whole-width strip). */
+function TabButton({ active, onClick, count, children }: { active: boolean; onClick: () => void; count?: number; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        border: "none",
+        background: "transparent",
+        cursor: "pointer",
+        padding: "9px 0 8px",
+        borderBottom: active ? "2px solid var(--color-accent)" : "2px solid transparent",
+        color: active ? "var(--color-text)" : "var(--color-text-muted)",
+        fontWeight: active ? 700 : 500,
+        fontSize: TEXT.base,
+      }}
+    >
+      {children}
+      {count != null && (
+        <span
+          style={{
+            fontSize: TEXT.xs,
+            fontWeight: 700,
+            color: active ? "var(--color-text)" : "var(--color-text-muted)",
+            background: "var(--color-bg-hover)",
+            borderRadius: RADIUS.sm,
+            padding: "1px 6px",
+          }}
+        >
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** The Projects tab's content — a flat navigator (icon, name, session count), no inline session
+ * cards: the Sessions tab already owns "what's actually running," this is purely "jump to a
+ * project's own Overview page." Reuses .metaharn-card-row for hover (border/bg/shadow) and only
+ * sets `background` inline for the one row that's actually active — leaving it unset (not
+ * "transparent") for every other row so the class's own :hover rule isn't shadowed by an inline
+ * value of equal specificity-defeating precedence (see theme.css's own note on this, next to
+ * .metaharn-session-card, about the exact same pitfall). */
+function ProjectsFlatList({
+  projects,
+  projectStats,
+  activeCwd,
+  onSelectProject,
+  onNewProject,
+  onShowAllProjects,
+}: {
+  projects: ProjectListItem[];
+  projectStats: Map<string, { count: number; lastActivity?: Date }>;
+  activeCwd?: string;
+  onSelectProject: (cwd: string) => void;
+  onNewProject: () => void;
+  onShowAllProjects: () => void;
+}) {
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: `${SPACE.sm}px ${SPACE.sm}px` }}>
+      <button
+        onClick={onNewProject}
+        className="metaharn-icon-btn"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          width: "100%",
+          textAlign: "left",
+          border: "none",
+          borderRadius: RADIUS.md,
+          color: "var(--color-text-secondary)",
+          cursor: "pointer",
+          padding: "6px 6px",
+          fontSize: TEXT.sm,
+        }}
+      >
+        <PlusIcon size={12} />
+        <span style={{ flex: 1 }}>Add project</span>
+        <span style={{ color: "var(--color-text-muted)" }}>›</span>
+      </button>
+
+      {projects.length === 0 ? (
+        <p style={{ padding: `${SPACE.sm}px 6px`, color: "var(--color-text-muted)", fontSize: TEXT.base }}>No projects yet.</p>
+      ) : (
+        <>
+          <div style={{ padding: "12px 6px 4px" }}>
+            <Eyebrow>Your projects</Eyebrow>
+          </div>
+          {projects.map((project) => {
+            const active = project.localPath === activeCwd;
+            const count = projectStats.get(project.localPath)?.count ?? 0;
+            return (
+              <button
+                key={project.id}
+                onClick={() => onSelectProject(project.localPath)}
+                className="metaharn-card-row"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  width: "100%",
+                  textAlign: "left",
+                  borderRadius: RADIUS.md,
+                  background: active ? "var(--color-bg-hover)" : undefined,
+                  color: active ? "var(--color-text)" : "var(--color-text-secondary)",
+                  fontWeight: active ? 700 : 500,
+                  cursor: "pointer",
+                  padding: "6px 6px",
+                  fontSize: TEXT.sm,
+                  marginBottom: 1,
+                }}
+              >
+                <span style={{ display: "flex", flexShrink: 0, color: active ? "var(--color-accent)" : "var(--color-text-muted)" }}>
+                  <FolderIcon size={13} />
+                </span>
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{project.name}</span>
+                {count > 0 && <span style={{ fontSize: TEXT.xs, color: "var(--color-text-muted)", flexShrink: 0 }}>{count}</span>}
+              </button>
+            );
+          })}
+        </>
+      )}
+
+      <button
+        onClick={onShowAllProjects}
+        style={{
+          display: "block",
+          width: "100%",
+          textAlign: "left",
+          padding: `${SPACE.xs + 2}px 6px`,
+          marginTop: SPACE.xs,
+          border: "none",
+          background: "transparent",
+          color: "var(--color-text-muted)",
+          cursor: "pointer",
+          fontSize: TEXT.sm,
+        }}
+      >
+        Browse all projects →
+      </button>
     </div>
   );
 }
@@ -329,6 +478,7 @@ function ProjectGroup({
   onSelectProject,
   onOpenTerminal,
   onSelectSession,
+  onRenameSession,
   onArchiveSession,
   onForkSession,
   canFork,
@@ -348,6 +498,7 @@ function ProjectGroup({
   onSelectProject: (cwd: string) => void;
   onOpenTerminal: (cwd: string) => void;
   onSelectSession: (session: SessionListItem) => void;
+  onRenameSession: (session: SessionListItem, title: string) => void;
   onArchiveSession: (session: SessionListItem) => void;
   onForkSession: (session: SessionListItem) => void;
   canFork: (session: SessionListItem) => boolean;
@@ -387,7 +538,20 @@ function ProjectGroup({
 
   return (
     <div style={{ marginBottom: SPACE.sm }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 2, padding: `2px ${SPACE.sm}px` }}>
+      {/* A solid full-width fill for the currently-open project, not just an accent-colored
+          label — a text-color change alone was the same "too subtle to register at a glance"
+          problem the session card's own active state had before its glow ring. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "5px 6px",
+          margin: "0 2px",
+          borderRadius: RADIUS.md,
+          background: active ? "var(--color-bg-hover)" : "transparent",
+        }}
+      >
         <button
           onClick={() => onToggleGroup(cwd)}
           aria-label={collapsed ? "Expand" : "Collapse"}
@@ -396,7 +560,7 @@ function ProjectGroup({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            width: 18,
+            width: 14,
             flexShrink: 0,
             border: "none",
             background: "transparent",
@@ -407,6 +571,9 @@ function ProjectGroup({
         >
           {collapsed ? "▸" : "▾"}
         </button>
+        <span style={{ display: "flex", flexShrink: 0, color: active ? "var(--color-accent)" : "var(--color-text-muted)" }}>
+          <FolderIcon size={13} />
+        </span>
         <button
           onClick={() => !unregistered && onSelectProject(cwd)}
           disabled={unregistered}
@@ -416,18 +583,17 @@ function ProjectGroup({
             textAlign: "left",
             border: "none",
             background: "transparent",
-            color: active ? "var(--color-accent)" : "var(--color-text-muted)",
+            color: active ? "var(--color-text)" : "var(--color-text-secondary)",
             cursor: unregistered ? "default" : "pointer",
             padding: "3px 0",
-            fontSize: TEXT.xs,
-            fontWeight: 700,
-            letterSpacing: 0.5,
+            fontSize: TEXT.sm,
+            fontWeight: active ? 700 : 500,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
           }}
         >
-          {name.toUpperCase()}
+          {name}
         </button>
         {!unregistered && (
           <IconButton title="New session in this project" onClick={() => onOpenTerminal(cwd)}>
@@ -453,6 +619,7 @@ function ProjectGroup({
                 isWorktree={worktreeParentByCwd.has(session.cwd)}
                 isDragSource={draggedPath === session.path}
                 onSelect={() => onSelectSession(session)}
+                onRename={(title) => onRenameSession(session, title)}
                 onArchive={() => onArchiveSession(session)}
                 onFork={() => onForkSession(session)}
                 onCreateWorktree={() => onCreateWorktreeSession(session)}
@@ -507,7 +674,7 @@ export function StatusLine({ status, fallback }: { status?: SessionStatus; fallb
   }
   const live = status === "working" || status === "active";
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: statusColor(status) }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: statusColor(status), fontWeight: 600 }}>
       {live && <span className="metaharn-status-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor" }} />}
       {status === "waiting" && <ClockIcon size={10} />}
       {STATUS_LABEL[status]}
@@ -523,6 +690,7 @@ function SessionCard({
   isWorktree,
   isDragSource,
   onSelect,
+  onRename,
   onArchive,
   onFork,
   onCreateWorktree,
@@ -544,6 +712,7 @@ function SessionCard({
    * see ProjectGroup's draggedPath, which this is derived from. */
   isDragSource: boolean;
   onSelect: () => void;
+  onRename: (title: string) => void;
   onArchive: () => void;
   onFork: () => void;
   onCreateWorktree: () => void;
@@ -553,6 +722,18 @@ function SessionCard({
   onDropHere: () => void;
 }) {
   const isTerminal = session.type === "terminal";
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const startRename = () => {
+    setDraft(sessionTitle(session));
+    setRenaming(true);
+  };
+  const commitRename = () => {
+    setRenaming(false);
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== sessionTitle(session)) onRename(trimmed);
+  };
 
   const subMetaItems = [
     isTerminal && session.agentKind ? AGENT_DISPLAY_NAMES[session.agentKind] : null,
@@ -597,80 +778,120 @@ function SessionCard({
         >
           <GripIcon size={12} />
         </div>
-        <button
-          onClick={onSelect}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            textAlign: "left",
-            border: "none",
-            background: "transparent",
-            color: "var(--color-text)",
-            cursor: "pointer",
-            padding: `${SPACE.sm}px ${SPACE.sm + 2}px ${SPACE.sm}px 2px`,
-          }}
-        >
-          <div
+        {renaming ? (
+          <div style={{ flex: 1, minWidth: 0, padding: `${SPACE.sm}px ${SPACE.sm + 2}px ${SPACE.sm}px 2px` }}>
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitRename();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setRenaming(false);
+                }
+              }}
+              onBlur={commitRename}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "100%",
+                padding: "2px 4px",
+                fontSize: TEXT.base,
+                fontWeight: 600,
+                fontFamily: isTerminal ? '"IBM Plex Mono", Menlo, Monaco, monospace' : undefined,
+              }}
+            />
+          </div>
+        ) : (
+          <button
+            onClick={onSelect}
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              startRename();
+            }}
             style={{
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              fontSize: TEXT.base,
-              fontWeight: 600,
-              fontFamily: isTerminal ? '"IBM Plex Mono", Menlo, Monaco, monospace' : undefined,
-              paddingRight: 20,
+              flex: 1,
+              minWidth: 0,
+              textAlign: "left",
+              border: "none",
+              background: "transparent",
+              color: "var(--color-text)",
+              cursor: "pointer",
+              padding: `${SPACE.sm}px ${SPACE.sm + 2}px ${SPACE.sm}px 2px`,
             }}
           >
-            {isTerminal ? "›_ " : ""}
-            {sessionTitle(session)}
-          </div>
-          <div style={{ marginTop: 4, fontSize: TEXT.xs, display: "flex", alignItems: "center", gap: 5, overflow: "hidden" }}>
-            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              <StatusLine status={status} fallback={formatRelativeTime(session.modified)} />
-            </span>
-            {isWorktree && (
-              <span
-                className="metaharn-tooltip"
-                aria-label="Runs in a separate worktree checkout"
-                style={{ display: "inline-flex", color: "var(--color-text-muted)", flexShrink: 0 }}
-              >
-                <WorktreeIcon size={10} />
-              </span>
-            )}
-          </div>
-          {subMetaItems.length > 0 && (
-            <div style={{ marginTop: 3, fontSize: TEXT.xs, color: "var(--color-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {subMetaItems.join(" · ")}
+            <div
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontSize: TEXT.base,
+                fontWeight: 600,
+                fontFamily: isTerminal ? '"IBM Plex Mono", Menlo, Monaco, monospace' : undefined,
+                paddingRight: 20,
+              }}
+            >
+              {isTerminal ? "›_ " : ""}
+              {sessionTitle(session)}
             </div>
-          )}
-        </button>
-      </div>
-      <div
-        className="metaharn-hover-actions"
-        style={{
-          position: "absolute",
-          top: 4,
-          right: 4,
-          display: "flex",
-          background: "var(--color-bg-elevated)",
-          borderRadius: RADIUS.sm,
-        }}
-      >
-        {canFork && (
-          <IconButton title="Fork this session" onClick={onFork}>
-            <ForkIcon size={13} />
-          </IconButton>
+            <div style={{ marginTop: 4, fontSize: TEXT.xs, display: "flex", alignItems: "center", gap: 5, overflow: "hidden" }}>
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <StatusLine status={status} fallback={formatRelativeTime(session.modified)} />
+              </span>
+              {isWorktree && (
+                <span
+                  className="metaharn-tooltip"
+                  aria-label="Runs in a separate worktree checkout"
+                  style={{ display: "inline-flex", color: "var(--color-text-muted)", flexShrink: 0 }}
+                >
+                  <WorktreeIcon size={10} />
+                </span>
+              )}
+            </div>
+            {subMetaItems.length > 0 && (
+              <div style={{ marginTop: 3, fontSize: TEXT.xs, color: "var(--color-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {subMetaItems.join(" · ")}
+              </div>
+            )}
+          </button>
         )}
-        <IconButton title="New child worktree session" onClick={onCreateWorktree}>
-          <WorktreeIcon size={13} />
-        </IconButton>
-        <IconButton title="Set dependency" onClick={(e) => onOpenDependencyMenu(e.currentTarget.getBoundingClientRect())}>
-          <LinkIcon size={13} />
-        </IconButton>
-        <IconButton title="Archive session" onClick={onArchive}>
-          <ArchiveIcon size={13} />
-        </IconButton>
       </div>
+      {!renaming && (
+        <div
+          className="metaharn-hover-actions"
+          style={{
+            position: "absolute",
+            top: 4,
+            right: 4,
+            display: "flex",
+            background: "var(--color-bg-elevated)",
+            borderRadius: RADIUS.sm,
+          }}
+        >
+          <IconButton
+            title="Rename session"
+            onClick={startRename}
+          >
+            <EditIcon size={13} />
+          </IconButton>
+          {canFork && (
+            <IconButton title="Fork this session" onClick={onFork}>
+              <ForkIcon size={13} />
+            </IconButton>
+          )}
+          <IconButton title="New child worktree session" onClick={onCreateWorktree}>
+            <WorktreeIcon size={13} />
+          </IconButton>
+          <IconButton title="Set dependency" onClick={(e) => onOpenDependencyMenu(e.currentTarget.getBoundingClientRect())}>
+            <LinkIcon size={13} />
+          </IconButton>
+          <IconButton title="Archive session" onClick={onArchive}>
+            <ArchiveIcon size={13} />
+          </IconButton>
+        </div>
+      )}
     </div>
   );
 }

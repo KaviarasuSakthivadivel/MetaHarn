@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import type { ProjectListItem, SessionListItem } from "../preload/preload.js";
 import { computeProjectStats, formatRelativeTime } from "./format.js";
-import { ArchiveIcon, BranchIcon, ChatIcon, ClockIcon, DownloadIcon, FolderIcon, PlusIcon, TrashIcon } from "./icons.js";
+import { ArchiveIcon, BranchIcon, ChatIcon, ClockIcon, DownloadIcon, PlusIcon, TrashIcon } from "./icons.js";
 import { Eyebrow, MetaChip } from "./ui.js";
+import FolderIconBadge from "./FolderIconBadge.js";
 
 interface ProjectsListPageProps {
   projects: ProjectListItem[];
@@ -172,20 +173,8 @@ export default function ProjectsListPage({
             color: "var(--color-text-secondary)",
           }}
         >
-          <div
-            style={{
-              width: 48,
-              height: 48,
-              borderRadius: 12,
-              background: "var(--color-accent-soft)",
-              color: "var(--color-accent)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginBottom: 14,
-            }}
-          >
-            <FolderIcon size={22} />
+          <div style={{ marginBottom: 14 }}>
+            <FolderIconBadge size={48} />
           </div>
           <p style={{ margin: "0 0 4px", color: "var(--color-text)", fontWeight: 600, fontSize: 15 }}>
             No projects yet
@@ -395,21 +384,7 @@ function ProjectRow({
           cursor: "pointer",
         }}
       >
-        <div
-          style={{
-            flexShrink: 0,
-            width: 38,
-            height: 38,
-            borderRadius: 9,
-            background: "var(--color-accent-soft)",
-            color: "var(--color-accent)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <FolderIcon size={18} />
-        </div>
+        <FolderIconBadge />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontWeight: 600, fontSize: 14.5 }}>{project.name}</span>
