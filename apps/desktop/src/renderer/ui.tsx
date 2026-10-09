@@ -15,8 +15,13 @@ import type { ReactNode } from "react";
  */
 
 export const SPACE = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 } as const;
-export const TEXT = { xs: 11, sm: 12, base: 13, md: 14, lg: 15, xl: 18, xxl: 26 } as const;
-export const RADIUS = { sm: 6, md: 8, lg: 10, xl: 12 } as const;
+// Bumped from {11,12,13,14,15,18,26} — the old scale read thin/cramped next to the rest of the
+// redesign (shadows, a bolder accent, more generous radii); base text especially (13px) was
+// doing a lot of the "too subtle" work on its own.
+export const TEXT = { xs: 11, sm: 12, base: 14, md: 15, lg: 16, xl: 20, xxl: 28 } as const;
+// Bumped from {6,8,10,12} — rounder corners read less "flat corporate," more current. md (9)
+// mirrors theme.css's .metaharn-session-card border-radius; keep them in sync if this changes.
+export const RADIUS = { sm: 6, md: 9, lg: 12, xl: 16 } as const;
 
 /** Small uppercase label — section titles, subsection headers ("SORT",
  * "DARK THEMES", "BREAKDOWN"). Previously hand-written at two different
@@ -48,6 +53,7 @@ export function Section({ title, children }: { title: string; children: ReactNod
           border: "1px solid var(--color-border)",
           borderRadius: RADIUS.lg,
           background: "var(--color-bg-elevated)",
+          boxShadow: "var(--shadow-sm)",
           overflow: "hidden",
         }}
       >
@@ -118,8 +124,11 @@ export function SegmentedControl<T extends string>({
             border: "none",
             background: value === opt.value ? "var(--color-accent)" : "transparent",
             color: value === opt.value ? "#fff" : "var(--color-text)",
+            fontWeight: value === opt.value ? 600 : 400,
+            boxShadow: value === opt.value ? "inset 0 0 0 1px rgba(0,0,0,0.06)" : undefined,
             cursor: "pointer",
             fontSize: TEXT.base,
+            transition: "background 0.12s ease, color 0.12s ease",
           }}
         >
           {opt.label}

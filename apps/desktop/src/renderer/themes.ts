@@ -34,107 +34,108 @@ export interface ThemeDef {
 }
 
 export const THEMES: ThemeDef[] = [
-  // The palette theme.css itself bakes into :root (light) and
-  // :root[data-theme="dark"] — "metaharn" (橙), the project's own namesake
-  // accent — existed only as a brief pre-JS flash before SettingsContext's
-  // effect overwrote document.documentElement.style with one of the
-  // borrowed palettes below on every mount; it had no id here and so no
-  // path to ever actually be chosen. Values copied directly from theme.css
-  // (not re-derived) to guarantee they match exactly; xterm needs its own
-  // full ANSI palette that theme.css never defined at all, composed to fit
-  // the same warm accent rather than reusing another theme's hues verbatim.
+  // The palette theme.css itself bakes into :root (light) and :root[data-theme="dark"] —
+  // MetaHarn's own signature warm amber ("橙" — bitter orange, the project's namesake), on
+  // true near-black neutral chrome in dark mode. See theme.css's own top-of-file comment for
+  // why this isn't the violet one earlier revision here used — direct feedback on the running
+  // app (reference: true-black chrome, a glowing amber ring on the selected item, confident
+  // status text) plus a full tour through every bundled community theme below pointed at
+  // insufficient contrast BETWEEN surface layers as the real problem, not any one hue. Values
+  // copied directly from theme.css (not re-derived) to guarantee they match exactly; xterm
+  // needs its own full ANSI palette that theme.css never defined at all, composed to fit the
+  // same amber accent — ANSI yellow in particular sits right next to the accent itself.
   {
     id: "metaharn-dark",
     label: "MetaHarn Dark",
     mode: "dark",
-    swatch: ["#17140f", "#f2823f", "#9ec97a", "#7aa2c7"],
+    swatch: ["#0c0c0e", "#f0a020", "#22c55e", "#60a5fa"],
     vars: {
-      "--color-bg": "#17140f",
-      "--color-bg-secondary": "#1e1911",
-      "--color-bg-elevated": "#241e15",
-      "--color-bg-hover": "#2b2417",
-      "--color-border": "#382e1e",
-      "--color-text": "#f2ece2",
-      "--color-text-secondary": "#b7ac98",
-      "--color-text-muted": "#7d7261",
-      "--color-accent": "#f2823f",
-      "--color-accent-hover": "#f6975c",
-      "--color-accent-soft": "#362317",
-      "--color-user-bubble": "#f2ece2",
-      "--color-user-bubble-text": "#17140f",
-      "--color-tool-bubble": "#241e15",
-      "--color-error": "#e08574",
-      "--color-error-soft": "#362017",
-      "--color-editor-bg": "#1e1911",
+      "--color-bg": "#18181c",
+      "--color-bg-secondary": "#0c0c0e",
+      "--color-bg-elevated": "#212126",
+      "--color-bg-hover": "#2a2a31",
+      "--color-border": "#323239",
+      "--color-text": "#f3f3f5",
+      "--color-text-secondary": "#a8a8b3",
+      "--color-text-muted": "#6e6e78",
+      "--color-accent": "#f0a020",
+      "--color-accent-hover": "#ffb84d",
+      "--color-accent-soft": "#3d2c12",
+      "--color-user-bubble": "#f3f3f5",
+      "--color-user-bubble-text": "#18181c",
+      "--color-tool-bubble": "#212126",
+      "--color-error": "#f0506a",
+      "--color-error-soft": "#3a1a22",
+      "--color-editor-bg": "#1b1b20",
     },
     terminal: {
-      background: "#17140f",
-      foreground: "#f2ece2",
-      cursor: "#f2823f",
-      selectionBackground: "#382e1e",
-      black: "#241e15",
-      red: "#e08574",
-      green: "#9ec97a",
-      yellow: "#e0af68",
-      blue: "#7aa2c7",
-      magenta: "#c99bd6",
-      cyan: "#7fc7c0",
-      white: "#b7ac98",
-      brightBlack: "#7d7261",
-      brightRed: "#f2a394",
-      brightGreen: "#b8dc96",
-      brightYellow: "#f6c987",
-      brightBlue: "#97bcd9",
-      brightMagenta: "#ddb8e8",
-      brightCyan: "#a0ddd6",
-      brightWhite: "#f2ece2",
+      background: "#18181c",
+      foreground: "#f3f3f5",
+      cursor: "#f0a020",
+      selectionBackground: "#323239",
+      black: "#212126",
+      red: "#f0506a",
+      green: "#22c55e",
+      yellow: "#eab308",
+      blue: "#60a5fa",
+      magenta: "#c586f5",
+      cyan: "#22d3ee",
+      white: "#a8a8b3",
+      brightBlack: "#6e6e78",
+      brightRed: "#f58aa0",
+      brightGreen: "#86efac",
+      brightYellow: "#f0a020",
+      brightBlue: "#93c5fd",
+      brightMagenta: "#ddabfa",
+      brightCyan: "#67e8f9",
+      brightWhite: "#f3f3f5",
     },
   },
   {
     id: "metaharn-light",
     label: "MetaHarn Light",
     mode: "light",
-    swatch: ["#ffffff", "#e0630f", "#6b8e3d", "#3d6f96"],
+    swatch: ["#fffdf9", "#d97706", "#15803d", "#2563eb"],
     vars: {
-      "--color-bg": "#ffffff",
-      "--color-bg-secondary": "#f7f6f3",
+      "--color-bg": "#fffdf9",
+      "--color-bg-secondary": "#f7f2ea",
       "--color-bg-elevated": "#ffffff",
-      "--color-bg-hover": "#f0ede7",
-      "--color-border": "#e6e1d8",
-      "--color-text": "#1c1712",
-      "--color-text-secondary": "#6b6259",
-      "--color-text-muted": "#a39a8c",
-      "--color-accent": "#e0630f",
-      "--color-accent-hover": "#c8560c",
-      "--color-accent-soft": "#fdf0e4",
-      "--color-user-bubble": "#1c1712",
+      "--color-bg-hover": "#f1e9db",
+      "--color-border": "#e8dfd0",
+      "--color-text": "#1f1a14",
+      "--color-text-secondary": "#6b6256",
+      "--color-text-muted": "#9c9284",
+      "--color-accent": "#d97706",
+      "--color-accent-hover": "#b45309",
+      "--color-accent-soft": "#fef3e2",
+      "--color-user-bubble": "#1f1a14",
       "--color-user-bubble-text": "#ffffff",
-      "--color-tool-bubble": "#f0ede7",
-      "--color-error": "#b3402f",
-      "--color-error-soft": "#fbeae7",
+      "--color-tool-bubble": "#f7f2ea",
+      "--color-error": "#dc2626",
+      "--color-error-soft": "#fce7e7",
       "--color-editor-bg": "#ffffff",
     },
     terminal: {
-      background: "#ffffff",
-      foreground: "#1c1712",
-      cursor: "#e0630f",
-      selectionBackground: "#e6e1d8",
-      black: "#1c1712",
-      red: "#b3402f",
-      green: "#6b8e3d",
-      yellow: "#a67c1f",
-      blue: "#3d6f96",
-      magenta: "#96518f",
-      cyan: "#3d8f88",
-      white: "#6b6259",
-      brightBlack: "#a39a8c",
-      brightRed: "#c8560c",
-      brightGreen: "#85ad5c",
-      brightYellow: "#c99a2f",
-      brightBlue: "#5a8caf",
-      brightMagenta: "#b06fa8",
-      brightCyan: "#5aada5",
-      brightWhite: "#1c1712",
+      background: "#fffdf9",
+      foreground: "#1f1a14",
+      cursor: "#d97706",
+      selectionBackground: "#e8dfd0",
+      black: "#1f1a14",
+      red: "#dc2626",
+      green: "#15803d",
+      yellow: "#b45309",
+      blue: "#2563eb",
+      magenta: "#9333ea",
+      cyan: "#0e9488",
+      white: "#6b6256",
+      brightBlack: "#9c9284",
+      brightRed: "#ef4444",
+      brightGreen: "#4caf50",
+      brightYellow: "#d97706",
+      brightBlue: "#5a8ef0",
+      brightMagenta: "#a855f7",
+      brightCyan: "#14b8a6",
+      brightWhite: "#1f1a14",
     },
   },
   {
@@ -922,8 +923,11 @@ export const THEMES: ThemeDef[] = [
   },
 ];
 
-export const DEFAULT_DARK_THEME_ID = "tokyo-night-storm";
-export const DEFAULT_LIGHT_THEME_ID = "catppuccin-latte";
+// MetaHarn's own signature theme, not a borrowed community palette — matches the real Dock icon
+// and the web app, so a fresh install's first impression is the actual brand, not Tokyo Night /
+// Catppuccin Latte (still available below for anyone who prefers them).
+export const DEFAULT_DARK_THEME_ID = "metaharn-dark";
+export const DEFAULT_LIGHT_THEME_ID = "metaharn-light";
 
 export function getTheme(id: string): ThemeDef | undefined {
   return THEMES.find((t) => t.id === id);

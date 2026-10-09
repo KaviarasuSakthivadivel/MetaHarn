@@ -32,14 +32,16 @@ export function computeProjectStats(sessions: SessionListItem[]): Map<string, { 
   return stats;
 }
 
+/** The last path segment of a cwd, natural case — the display name for a project/worktree that
+ * has no registered name of its own (an unregistered/orphan project, a worktree checkout, a
+ * dependency target). Previously force-uppercased, which read fine as a one-word badge but
+ * turned into a shouting wall of caps for anything longer (an unregistered project literally
+ * named "metaharn-owned-engine" rendered as "METAHARN-OWNED-ENGINE" in the sidebar) — every
+ * caller that actually wants the small-caps *look* (an Eyebrow-style section label) already
+ * applies its own CSS text-transform/.toUpperCase() at render time, so nothing relied on this
+ * function doing it at the data layer. */
 export function projectLabel(cwd: string): string {
-  return (
-    cwd
-      .split("/")
-      .filter(Boolean)
-      .pop()
-      ?.toUpperCase() ?? "UNKNOWN"
-  );
+  return cwd.split("/").filter(Boolean).pop() ?? "unknown";
 }
 
 export function sessionTitle(session: SessionListItem): string {

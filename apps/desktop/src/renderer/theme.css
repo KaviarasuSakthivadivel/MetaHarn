@@ -1,76 +1,109 @@
-/* "metaharn" (橙) — bitter-orange citrus, the project's namesake accent. */
+/* MetaHarn's signature accent is a warm amber ("橙" — bitter orange, the project's own
+   namesake), on TRUE near-black neutral chrome in dark mode — not the violet tint this file
+   carried for one revision. That violet was chosen to match the Dock icon's own recent reskin,
+   but direct feedback on the actual running app (a reference screenshot of another tool's UI:
+   true-black top bar/sidebar, a vivid amber glowing ring on the selected item, high-contrast
+   status text) made clear the violet tint read as "pastel," not "nice" — and a full tour through
+   every bundled community theme (Tokyo Night, Dracula, Gruvbox, One Dark, Catppuccin, …) landed
+   back on dissatisfaction too, which is what actually pointed at the real problem: insufficient
+   contrast BETWEEN surface layers, not the hue of any one of them. So two changes at once here —
+   amber over violet, AND a much wider luminance gap between chrome (bg-secondary: near-black,
+   recedes) and content canvas (bg: a visible step lighter) than before, where the two sat only
+   ~2% apart. This reintroduces a difference from the Dock icon's violet; ping if that should be
+   reverted too, but the in-app UI people actually look at all day took priority.
+   "metaharn-light"/"metaharn-dark" in themes.ts mirror these values 1:1 — keep both in sync. */
 
 :root {
-  --color-bg: #ffffff;
-  --color-bg-secondary: #f7f6f3;
+  --color-bg: #fffdf9;
+  --color-bg-secondary: #f7f2ea;
   --color-bg-elevated: #ffffff;
-  --color-bg-hover: #f0ede7;
-  --color-border: #e6e1d8;
-  --color-text: #1c1712;
-  --color-text-secondary: #6b6259;
-  --color-text-muted: #a39a8c;
-  --color-accent: #e0630f;
-  --color-accent-hover: #c8560c;
-  --color-accent-soft: #fdf0e4;
-  --color-user-bubble: #1c1712;
+  --color-bg-hover: #f1e9db;
+  --color-border: #e8dfd0;
+  --color-text: #1f1a14;
+  --color-text-secondary: #6b6256;
+  --color-text-muted: #9c9284;
+  --color-accent: #d97706;
+  --color-accent-hover: #b45309;
+  --color-accent-soft: #fef3e2;
+  --color-user-bubble: #1f1a14;
   --color-user-bubble-text: #ffffff;
-  --color-tool-bubble: #f0ede7;
-  --color-error: #b3402f;
-  --color-error-soft: #fbeae7;
+  --color-tool-bubble: #f7f2ea;
+  --color-error: #dc2626;
+  --color-error-soft: #fce7e7;
   --color-editor-bg: #ffffff;
   /* Session status dots (Sidebar.tsx) — distinct from --color-accent so
      "working" doesn't visually collide with the selected/active-row tint. */
-  --color-status-working: #3a8a4c;
-  --color-status-waiting: #d9a441;
-  --color-status-idle: #a39a8c;
+  --color-status-working: #15803d;
+  --color-status-waiting: #b45309;
+  --color-status-idle: #9c9284;
+  /* Elevation — real shadows instead of a border being the only depth cue. Cards (ui.tsx's
+     Section) use -sm, menus/dropdowns use -md, modals (ConfirmDialog, AddConnectorModal, …) use
+     -lg. Not per-theme (theme swaps via themes.ts only touch the --color-* tokens above); these
+     stay fixed per light/dark mode since shadow opacity that looks right on a near-black dark
+     surface reads as far too heavy on white, and vice versa. */
+  --shadow-sm: 0 1px 2px rgba(31, 26, 20, 0.06), 0 1px 1px rgba(31, 26, 20, 0.04);
+  --shadow-md: 0 8px 20px rgba(31, 26, 20, 0.1), 0 2px 6px rgba(31, 26, 20, 0.06);
+  --shadow-lg: 0 20px 48px rgba(31, 26, 20, 0.18), 0 6px 16px rgba(31, 26, 20, 0.1);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --color-bg: #17140f;
-    --color-bg-secondary: #1e1911;
-    --color-bg-elevated: #241e15;
-    --color-bg-hover: #2b2417;
-    --color-border: #382e1e;
-    --color-text: #f2ece2;
-    --color-text-secondary: #b7ac98;
-    --color-text-muted: #7d7261;
-    --color-accent: #f2823f;
-    --color-accent-hover: #f6975c;
-    --color-accent-soft: #362317;
-    --color-user-bubble: #f2ece2;
-    --color-user-bubble-text: #17140f;
-    --color-tool-bubble: #241e15;
-    --color-error: #e08574;
-    --color-error-soft: #362017;
-    --color-editor-bg: #1e1911;
-    --color-status-working: #5cb86f;
-    --color-status-waiting: #e0b85a;
-    --color-status-idle: #7d7261;
+    /* bg-secondary is DELIBERATELY darker than bg here (chrome recedes into true black, the
+       content canvas sits a visible step above it) — the inverse of the old relationship, and
+       of light mode's own (there, chrome is a touch darker than canvas too, just by far less —
+       dark mode has far more headroom before either end clips to pure black/white, so the gap
+       can and should be bigger). TopBar + the sidebar <aside> (App.tsx) both key off
+       bg-secondary; session/Section cards key off bg-elevated, a full step above BOTH. */
+    --color-bg: #18181c;
+    --color-bg-secondary: #0c0c0e;
+    --color-bg-elevated: #212126;
+    --color-bg-hover: #2a2a31;
+    --color-border: #323239;
+    --color-text: #f3f3f5;
+    --color-text-secondary: #a8a8b3;
+    --color-text-muted: #6e6e78;
+    --color-accent: #f0a020;
+    --color-accent-hover: #ffb84d;
+    --color-accent-soft: #3d2c12;
+    --color-user-bubble: #f3f3f5;
+    --color-user-bubble-text: #18181c;
+    --color-tool-bubble: #212126;
+    --color-error: #f0506a;
+    --color-error-soft: #3a1a22;
+    --color-editor-bg: #1b1b20;
+    --color-status-working: #22c55e;
+    --color-status-waiting: #eab308;
+    --color-status-idle: #74747e;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 10px 24px rgba(0, 0, 0, 0.5), 0 3px 8px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.65), 0 8px 20px rgba(0, 0, 0, 0.45);
   }
 }
 
 :root[data-theme="dark"] {
-  --color-bg: #17140f;
-  --color-bg-secondary: #1e1911;
-  --color-bg-elevated: #241e15;
-  --color-bg-hover: #2b2417;
-  --color-border: #382e1e;
-  --color-text: #f2ece2;
-  --color-text-secondary: #b7ac98;
-  --color-text-muted: #7d7261;
-  --color-accent: #f2823f;
-  --color-accent-hover: #f6975c;
-  --color-accent-soft: #362317;
-  --color-user-bubble: #f2ece2;
-  --color-user-bubble-text: #17140f;
-  --color-tool-bubble: #241e15;
-  --color-error: #e08574;
-  --color-error-soft: #362017;
-  --color-editor-bg: #1e1911;
-  --color-status-working: #5cb86f;
-  --color-status-waiting: #e0b85a;
-  --color-status-idle: #7d7261;
+  --color-bg: #18181c;
+  --color-bg-secondary: #0c0c0e;
+  --color-bg-elevated: #212126;
+  --color-bg-hover: #2a2a31;
+  --color-border: #323239;
+  --color-text: #f3f3f5;
+  --color-text-secondary: #a8a8b3;
+  --color-text-muted: #6e6e78;
+  --color-accent: #f0a020;
+  --color-accent-hover: #ffb84d;
+  --color-accent-soft: #3d2c12;
+  --color-user-bubble: #f3f3f5;
+  --color-user-bubble-text: #18181c;
+  --color-tool-bubble: #212126;
+  --color-error: #f0506a;
+  --color-error-soft: #3a1a22;
+  --color-editor-bg: #1b1b20;
+  --color-status-working: #22c55e;
+  --color-status-waiting: #eab308;
+  --color-status-idle: #74747e;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 10px 24px rgba(0, 0, 0, 0.5), 0 3px 8px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.65), 0 8px 20px rgba(0, 0, 0, 0.45);
 }
 
 * {
@@ -89,45 +122,180 @@ body {
   color: var(--color-text);
   font-family:
     "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/* A page's own h1/h2/h3 almost always only sets `margin` inline (ui.tsx's components included)
+   and otherwise inherits the browser UA stylesheet's size — which is relative to `body`'s font
+   size and was never actually tuned for this app, just whatever the default happened to be. One
+   real, deliberate scale here instead, with the slight negative tracking most interfaces apply
+   at display sizes to keep larger type from looking loose. */
+h1 {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+h2 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+h3 {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+/* A visible brand-colored selection highlight instead of each platform's own default (hard to
+   read against a dark surface in particular) — a small, cheap "this is a designed app" cue that
+   shows up anywhere text is selected: chat text, a commit hash, a file diff. */
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+/* A real reset, not just font/color — the browser's native button chrome (a light gray/white
+   fill + border + its own padding, on EVERY platform this app ships to) was never actually
+   overridden app-wide; every one of this codebase's many ad-hoc buttons had to remember to set
+   background/border/cursor inline itself instead, and at least two newly-added ones (Sidebar.tsx's
+   ProjectsFlatList — the "Add project" row and inactive project rows) didn't, which is exactly
+   how a stray native-white button ended up sitting in an otherwise near-black sidebar. transparent
+   here is a safe default specifically BECAUSE it doesn't fight a class's own :hover rule the way
+   setting it to the literal string "transparent" inline would (see .metaharn-session-card's own
+   comment on inline-vs-:hover precedence) — any button that still wants a real border/background
+   keeps setting it explicitly and simply overrides this. */
 button {
   font-family: inherit;
   color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
 }
 
-input {
+input,
+textarea,
+select {
   font-family: inherit;
+  font-size: 14px;
   color: var(--color-text);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: 8px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-muted);
+}
+/* Applies everywhere, not just the handful of inputs that opt into
+   .metaharn-focus-ring below — a real focus ring was previously the
+   exception rather than the default across the app's many ad-hoc forms
+   (GitPanel's commit message box, FilesPane's search, App.tsx's repo-path
+   field, …), each silently falling back to nothing or the browser's own
+   unstyled outline. */
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
 }
 
 button.metaharn-btn-primary {
+  position: relative;
   background: var(--color-accent);
+  background-image: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0));
   color: #fff;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 8px 14px;
+  font-weight: 600;
   cursor: pointer;
+  box-shadow: var(--shadow-sm), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  transition: background 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
 }
 button.metaharn-btn-primary:hover {
   background: var(--color-accent-hover);
+  box-shadow: var(--shadow-md), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  transform: translateY(-1px);
+}
+button.metaharn-btn-primary:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
 }
 button.metaharn-btn-primary:disabled {
   opacity: 0.5;
   cursor: default;
+  transform: none;
+  box-shadow: none;
 }
 
 /* Hover lift for card-style rows (project list, etc.) — inline styles can't
-   express :hover, so this is the minimal CSS needed for that one thing. */
+   express :hover, so this is the minimal CSS needed for that one thing. A
+   faint shadow rides along with the existing border/background shift so a
+   hovered card reads as physically closer, not just recolored. */
+/* border is declared HERE (transparent, 1px) rather than left for each caller to set inline —
+   an inline `border` (even "1px solid transparent") always wins the cascade over :hover's own
+   `border-color` below, same precedence problem .metaharn-session-card's own comment documents,
+   which meant :hover's border-color never actually rendered for every row that set its own
+   inline border (several did). Declaring the edge here, with nothing but color left for callers
+   or :hover to override, is what makes the override actually reach the screen. */
 .metaharn-card-row {
-  transition: border-color 0.12s ease, background 0.12s ease;
+  border: 1px solid transparent;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+/* Opt-in modifier for callers in a GRID of equal peer items (ProjectOverview.tsx's
+ * OverviewSessionCard) rather than a single-column list (the sidebar, ArchivedSessionRow,
+ * ProjectsFlatList) — a grid has no position-in-a-list cue separating neighbors, so each card
+ * needs its own always-visible edge to read as "a card" at all, not just on hover/active. Source
+ * order matters here: declared before :hover/:active below, so those still win when they apply. */
+.metaharn-card-row.metaharn-card-row-bordered {
+  border-color: var(--color-border);
+  background: var(--color-bg-elevated);
 }
 .metaharn-card-row:hover {
   border-color: var(--color-accent);
   background: var(--color-bg-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Same bold ring treatment as .metaharn-session-card-active (Sidebar.tsx), for
+ * .metaharn-card-row callers that also have a real "this one is currently open" state —
+ * ProjectOverview.tsx's OverviewSessionCard (the ACTIVE grid's own session cards) in particular,
+ * so a session reads the same way whether you're looking at it in the sidebar or in the page.
+ * background is a NEUTRAL elevated tone, not an amber-tinted one — an accent-soft fill behind a
+ * colored status word (StatusLine renders "Active"/"Working" in --color-status-working, a green
+ * that has nothing to do with the accent) was two saturated hues fighting inside one small card.
+ * The border + glow alone already says "this one is selected" without staining the fill too. */
+.metaharn-card-row.metaharn-card-row-active {
+  border-color: var(--color-accent);
+  background: var(--color-bg-hover);
+  box-shadow: 0 0 0 1.5px var(--color-accent), 0 4px 10px color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+/* Kept as an alias for existing className="metaharn-focus-ring" call sites — the rule itself
+   now lives on the bare input/textarea/select selector above, which covers every form field in
+   the app by default instead of requiring each one to opt in. */
+.metaharn-focus-ring {
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* ProjectOverview.tsx's quick-start composer — its <textarea> is borderless (it's merged into
+   one bordered card with the Terminal/Chat quick-action footer below it, so IT can't also carry
+   its own border without the two looking like two separate boxes again), which means the global
+   input/textarea :focus rule above has no border on that element to recolor. :focus-within on
+   the outer card does the same job without any JS focus-tracking state: ring the whole composer
+   when the textarea inside it has focus. */
+.metaharn-composer {
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.metaharn-composer:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
 }
 
 .metaharn-icon-btn {
@@ -136,6 +304,33 @@ button.metaharn-btn-primary:disabled {
 .metaharn-icon-btn:hover {
   background: var(--color-bg-hover);
   color: var(--color-text);
+}
+
+/* A plain "← Project" breadcrumb link (App.tsx's terminal-tab header, among others) — no
+   border/background of its own, so the only available hover cue is color; previously had none
+   at all. */
+.metaharn-breadcrumb-link {
+  transition: color 0.12s ease;
+}
+.metaharn-breadcrumb-link:hover {
+  color: var(--color-text);
+}
+
+/* ProjectOverview.tsx's LaunchTile — the "Terminal"/"Chat" launch tiles. Lift + glow on hover,
+   same recipe as button.metaharn-btn-primary, so the page's two primary actions feel as alive
+   as its primary button does. */
+.metaharn-launch-tile {
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.metaharn-launch-tile:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+.metaharn-launch-tile:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 /* The sidebar's resize handle (App.tsx) — its "actively dragging" state is
@@ -171,28 +366,37 @@ button.metaharn-btn-primary:disabled {
    modifier class instead of an inline color for the same reason — it needs
    to coexist with :hover's own border/background without one silently
    blocking the other via inline precedence. border-radius mirrors
-   ui.tsx's RADIUS.md (8) — keep them in sync if that token ever changes. */
+   ui.tsx's RADIUS.md (9) — keep them in sync if that token ever changes. */
+/* Plain/borderless by default — NOT a card at rest, just title + colored status text sitting
+   directly in the sidebar with no box around it at all. A real bordered, glowing card is
+   reserved for the one session that's actually open, so a sidebar with a dozen sessions reads as
+   a calm list with exactly one unmissable highlight, instead of a dozen near-identical boxes
+   where "active" was just a slightly different box among many other boxes. */
 .metaharn-session-card {
   position: relative;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-elevated);
-  transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease, box-shadow 0.12s ease;
 }
+/* A real ring (box-shadow, not just border-color) for the selected session — bold and
+   unambiguous on purpose, since this is the only card-chrome state that exists at all now.
+   background is a neutral elevated tone, not an amber-tinted one — StatusLine renders
+   "Active"/"Working" in --color-status-working (a green unrelated to the accent) right inside
+   this card, and an accent-soft fill behind it was two saturated hues fighting each other. The
+   border + glow alone already reads as "selected" without staining the fill too. */
 .metaharn-session-card.metaharn-session-card-active {
   border-color: var(--color-accent);
-  background: var(--color-accent-soft);
+  background: var(--color-bg-hover);
+  box-shadow: 0 0 0 1.5px var(--color-accent), 0 4px 10px color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
-.metaharn-session-card:hover {
-  border-color: var(--color-accent);
+/* Hover gets a quiet background tint only — no border — so an inactive row doesn't start
+   looking like a second, competing "card" the moment your cursor passes over it. */
+.metaharn-session-card:hover:not(.metaharn-session-card-active) {
   background: var(--color-bg-hover);
 }
-/* A left accent bar on top of the border/background shift — a stronger,
-   harder-to-miss "this row is highlighted" signal than a 1px border color
-   change alone, which is what the user pointed at as too subtle to
-   register at a glance. Stays lit permanently (not just on :hover) for
-   the active/selected session, so selection remains legible mid-hover of
-   a DIFFERENT row too. */
+/* A left accent bar for the active session only — stays lit permanently (not a hover effect)
+   so selection remains legible even while hovering a DIFFERENT row. */
 .metaharn-session-card::before {
   content: "";
   position: absolute;
@@ -205,7 +409,6 @@ button.metaharn-btn-primary:disabled {
   opacity: 0;
   transition: opacity 0.12s ease;
 }
-.metaharn-session-card:hover::before,
 .metaharn-session-card.metaharn-session-card-active::before {
   opacity: 1;
 }
