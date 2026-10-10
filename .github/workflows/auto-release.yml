@@ -1,0 +1,73 @@
+name: Auto-release
+
+# Cuts a new patch release automatically on every push to main — no version
+# number typed by hand, no local terminal needed. On each push:
+#   1. Reads the latest `vX.Y.Z` git tag and bumps the patch number.
+#   2. Runs scripts/bump-version.mjs (same script `npm run release:version`
+#      uses locally) to write that version into every workspace and roll
+#      CHANGELOG.md's [Unreleased] section into a new dated heading.
+#   3. Commits "Release vX.Y.Z", tags it, and pushes both to main.
+#   4. Explicitly dispatches release.yml against the new tag, which builds
+#      and publishes the arm64/x64 .dmg assets as a GitHub DRAFT release —
+#      a human still reviews and clicks Publish (see docs/RELEASING.md).
+#
+# Why "explicitly dispatches" instead of just letting the tag push trigger
+# release.yml's own `push: tags: v*` listener: GitHub deliberately does not
+# re-trigger other workflows from a push made with the default GITHUB_TOKEN
+# (its built-in guard against exactly the infinite-loop risk a workflow like
+# this would otherwise create) — so the tag push below is silent on its own,
+# and `gh workflow run` is used to start release.yml directly instead. This
+# is also why no infinite-loop guard is needed on the trigger below: this
+# job's own "Release vX.Y.Z" commit, pushed with the default token, can't
+# start a new run of this same workflow either. The `if:` guard is kept
+# anyway as cheap defense-in-depth in case that token is ever swapped for a
+# PAT (which _would_ re-trigger things) for some other reason later.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.event.head_commit.message, 'Release v') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full tag history — `git describe` below needs it
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Compute next patch version
+        id: version
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "v0.0.0")
+          VERSION="${LAST_TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          NEXT="$MAJOR.$MINOR.$((PATCH + 1))"
+          echo "Last tag: $LAST_TAG -> next: v$NEXT"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version and changelog
+        run: node scripts/bump-version.mjs "${{ steps.version.outputs.next }}"
+
+      - name: Commit, tag, and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Release v${{ steps.version.outputs.next }}"
+          git tag "v${{ steps.version.outputs.next }}"
+          git push origin HEAD:main
+          git push origin "v${{ steps.version.outputs.next }}"
+
+      - name: Trigger the macOS build + draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref "v${{ steps.version.outputs.next }}"

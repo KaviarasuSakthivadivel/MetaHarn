@@ -34,48 +34,69 @@ flow below assumes you check before tagging.
 
 ## Cutting a release
 
-Releasing is a deliberate, separate action from ordinary development — it
-never happens automatically off of CI going green on `main`. The flow:
+**This is now fully automatic.** `.github/workflows/auto-release.yml` runs on
+every push to `main` (every merge included) and does the whole thing with no
+version number typed by hand:
 
-1. **Make sure `main` is green** (the CI workflow above) and that
-   `CHANGELOG.md`'s `[Unreleased]` section actually describes what shipped
-   since the last release. Fill it in by hand first if it's empty — the
-   version-bump script below moves whatever is already there, it doesn't
-   write changelog entries for you.
-2. **Run the version-bump helper** from the repo root:
-   ```
-   npm run release:version -- <X.Y.Z>
-   ```
-   (`scripts/bump-version.mjs`.) This writes `<X.Y.Z>` into every workspace's
-   `package.json` (root, every `apps/*`, every `packages/*`) plus
-   `apps/web/src-tauri/tauri.conf.json`'s own `version` field, and rewrites
-   `CHANGELOG.md`: the `[Unreleased]` section's content moves under a new
-   `## [X.Y.Z] - <today>` heading, a fresh empty `[Unreleased]` section is
-   left above it, and the compare-link footer at the bottom is fixed up
-   (`[Unreleased]` now compares `vX.Y.Z...HEAD`, and a new `[X.Y.Z]` link
-   compares against the previous tag). It only edits files — no git commands
-   run as part of it.
-3. **Review the diff** (`git diff`) like any other change before committing.
-4. **Commit, tag, and push** — deliberately manual, not scripted:
-   ```
-   git add -A
-   git commit -m "Release vX.Y.Z"
-   git tag vX.Y.Z
-   git push && git push --tags
-   ```
-5. **Pushing the tag triggers `.github/workflows/release.yml`** on
-   `macos-latest`: it runs `electron-forge publish` twice (`--arch=arm64`,
-   then `--arch=x64` — see the universal-build note below for why not one
-   combined run) and uploads both DMGs/zips to a **draft** GitHub Release via
-   `PublisherGithub` (`draft: true` in `forge.config.ts`).
-6. **A human reviews and publishes the draft release manually** from the
-   GitHub UI (unchanged from before this doc existed) — check the attached
-   arm64 and x64 assets are both present, edit the release notes/description
-   as desired (the changelog entry from step 2 is a good starting point),
-   then hit **Publish**.
+1. Reads the latest `vX.Y.Z` tag and bumps the **patch** number
+   (`X.Y.(Z+1)`) — it always patch-bumps; there's no commit-message
+   convention in this repo (no `feat:`/`fix:` prefixes) to infer a
+   minor/major bump from. Want a minor/major bump instead? Use the manual
+   flow below once, then auto-release picks up patch-bumping from that new
+   base on the next push.
+2. Runs `scripts/bump-version.mjs` (the same script the manual flow below
+   uses) — writes the new version into every workspace's `package.json` and
+   `apps/web/src-tauri/tauri.conf.json`, and rolls `CHANGELOG.md`'s
+   `[Unreleased]` section into a new `## [X.Y.Z] - <today>` heading. If
+   `[Unreleased]` is empty at the time, the new section is just empty too —
+   nothing fails, but it's worth writing real changelog entries as you go
+   (any ordinary commit to `main` can touch `[Unreleased]`) so releases stay
+   meaningful instead of blank.
+3. Commits `Release vX.Y.Z`, tags it, and pushes both to `main` — using the
+   default `GITHUB_TOKEN`, which deliberately does **not** re-trigger this
+   same workflow (GitHub's own anti-loop protection: a push made with the
+   default token never fires another run), so this can't cascade into an
+   infinite release loop.
+4. Explicitly dispatches `.github/workflows/release.yml` against the new tag
+   (`gh workflow run release.yml --ref vX.Y.Z`) — the ordinary tag-push
+   trigger on `release.yml` is silent here for the same reason (step 3's
+   token doesn't re-trigger workflows), so auto-release.yml starts it
+   directly instead.
+5. `release.yml` builds on `macos-latest`, runs `electron-forge publish`
+   twice (`--arch=arm64`, then `--arch=x64` — see the universal-build note
+   below for why not one combined run), and uploads both DMGs/zips to a
+   **draft** GitHub Release via `PublisherGithub` (`draft: true` in
+   `forge.config.ts`).
+6. **A human still reviews and publishes the draft release manually** from
+   the GitHub UI — this one gate is intentionally not automated. Check the
+   attached arm64 and x64 assets are both present, edit the release
+   notes/description as desired (the changelog entry from step 2 is a good
+   starting point), then hit **Publish**.
 
-`workflow_dispatch` is also wired up on `release.yml` if you ever need to
-re-run the build/publish step for an existing tag without re-pushing it.
+Practical consequence worth knowing: since this fires on *every* push to
+`main`, an active day of several separate pushes produces several separate
+draft releases (each a few minutes of CI time), not one. Push everything for
+a logical change in a single `git push` where that's workable, and expect to
+periodically clean up/publish the backlog of drafts this produces rather
+than treating every single one as something to act on immediately.
+
+### Manual override
+
+The old by-hand flow still works, e.g. for a deliberate minor/major bump, or
+to cut a release from a branch other than `main`:
+
+```
+npm run release:version -- <X.Y.Z>   # scripts/bump-version.mjs — edits files only
+git diff                             # review
+git add -A
+git commit -m "Release vX.Y.Z"
+git tag vX.Y.Z
+git push && git push --tags          # tag push triggers release.yml directly (no PAT needed for a human's own push)
+```
+
+`workflow_dispatch` is also wired up on `release.yml` directly if you ever
+need to re-run the build/publish step for an existing tag without pushing
+anything.
 
 **Outstanding draft from the last release**: `v0.1.0`'s GitHub Release has
 been sitting as an unpublished **Draft** since it was created (2026-08-25) —
