@@ -9,6 +9,40 @@ still include breaking changes.
 
 ## [0.1.1] - 2026-10-10
 
+### Added
+- Chat messages render as real Markdown — headings, tables, and bold text no
+  longer show up as literal `##`/`|...|`/`**` characters, and fenced code
+  blocks get syntax highlighting plus a Copy button.
+- A CI workflow (`.github/workflows/ci.yml`) typechecks every workspace and
+  builds the web app on every push and pull request to `main`, so a change's
+  releasability is known before any release is cut.
+- Releases are now cut automatically (`.github/workflows/auto-release.yml`):
+  every push to `main` bumps the patch version, updates this changelog,
+  tags, and triggers the existing build/publish pipeline — a human still
+  reviews and publishes the resulting draft release. `npm run
+  release:version` remains available for a deliberate minor/major bump.
+
+### Changed
+- The Workspace sidebar now defaults to 25% of the window width instead of a
+  fixed 220px.
+
+### Fixed
+- The Project Overview page's Idle status filter showed "No sessions match
+  this filter" even though every session card displayed an "Idle" badge —
+  the badge was a misleading placeholder shown for sessions with no tracked
+  live status at all, not the real idle state the filter checked for. It no
+  longer claims a status it doesn't have.
+- `apps/desktop` imported `@earendil-works/pi-agent-core` without declaring
+  it as a direct dependency, relying on npm's hoisting to expose it as a
+  side effect of `@earendil-works/pi-coding-agent`'s own dependency tree —
+  fragile, and now declared explicitly.
+
+### Security
+- Fixed `fast-uri`, `hono`, `ip-address`, `proxy-addr` (critical IP spoofing
+  via IPv4-mapped IPv6 trust subnet), `qs`, and `brace-expansion` advisories
+  via `npm audit fix` (56 → 42 vulnerabilities across the workspace, all
+  non-breaking).
+
 ## [0.1.0] - 2026-08-25
 
 First real, distributable release.
