@@ -4,6 +4,91 @@ Windows/Linux are deliberately out of scope for now — see `forge.config.ts`'s
 own comment on why the Vite plugin structure already doesn't block adding
 them later.
 
+## Continuous Integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull
+request targeting `main`, on `ubuntu-latest`. It is deliberately separate
+from the release pipeline (below) and does **not** build or package the
+Electron app — no DMG, no `electron-forge`, nothing macOS-specific — because
+nothing it checks needs that. It validates, per workspace:
+
+- `apps/web`: `npm run build --workspace=apps/web` (its own `build` script —
+  `tsc --noEmit && vite build`). No native deps, builds cleanly on Linux.
+- `apps/desktop` and `apps/server`: `npx tsc --noEmit -p <workspace>/tsconfig.json`.
+  Neither has its own typecheck script, so this invokes `tsc` directly against
+  each workspace's `tsconfig.json`. Type-checking does not execute the code,
+  so this does **not** need `better-sqlite3`/`node-pty`'s native bindings to
+  actually load — confirmed by running it on a plain `ubuntu` environment
+  with no native rebuild step, before relying on that assumption here.
+- `packages/context-engine`, `packages/db`, `packages/engine`: same
+  `tsc --noEmit -p <package>/tsconfig.json` treatment — none defines its own
+  build/typecheck script either.
+
+There is no automated test suite in this repo yet (no vitest/jest/`node:test`
+config anywhere), so CI doesn't run one — this is a real gap, not an
+oversight, and should be closed by adding real tests and a test step
+together, rather than wiring up an empty placeholder step now.
+
+A green CI run on `main` is the bar for "releasable" — it's what the release
+flow below assumes you check before tagging.
+
+## Cutting a release
+
+Releasing is a deliberate, separate action from ordinary development — it
+never happens automatically off of CI going green on `main`. The flow:
+
+1. **Make sure `main` is green** (the CI workflow above) and that
+   `CHANGELOG.md`'s `[Unreleased]` section actually describes what shipped
+   since the last release. Fill it in by hand first if it's empty — the
+   version-bump script below moves whatever is already there, it doesn't
+   write changelog entries for you.
+2. **Run the version-bump helper** from the repo root:
+   ```
+   npm run release:version -- <X.Y.Z>
+   ```
+   (`scripts/bump-version.mjs`.) This writes `<X.Y.Z>` into every workspace's
+   `package.json` (root, every `apps/*`, every `packages/*`) plus
+   `apps/web/src-tauri/tauri.conf.json`'s own `version` field, and rewrites
+   `CHANGELOG.md`: the `[Unreleased]` section's content moves under a new
+   `## [X.Y.Z] - <today>` heading, a fresh empty `[Unreleased]` section is
+   left above it, and the compare-link footer at the bottom is fixed up
+   (`[Unreleased]` now compares `vX.Y.Z...HEAD`, and a new `[X.Y.Z]` link
+   compares against the previous tag). It only edits files — no git commands
+   run as part of it.
+3. **Review the diff** (`git diff`) like any other change before committing.
+4. **Commit, tag, and push** — deliberately manual, not scripted:
+   ```
+   git add -A
+   git commit -m "Release vX.Y.Z"
+   git tag vX.Y.Z
+   git push && git push --tags
+   ```
+5. **Pushing the tag triggers `.github/workflows/release.yml`** on
+   `macos-latest`: it runs `electron-forge publish` twice (`--arch=arm64`,
+   then `--arch=x64` — see the universal-build note below for why not one
+   combined run) and uploads both DMGs/zips to a **draft** GitHub Release via
+   `PublisherGithub` (`draft: true` in `forge.config.ts`).
+6. **A human reviews and publishes the draft release manually** from the
+   GitHub UI (unchanged from before this doc existed) — check the attached
+   arm64 and x64 assets are both present, edit the release notes/description
+   as desired (the changelog entry from step 2 is a good starting point),
+   then hit **Publish**.
+
+`workflow_dispatch` is also wired up on `release.yml` if you ever need to
+re-run the build/publish step for an existing tag without re-pushing it.
+
+**Outstanding draft from the last release**: `v0.1.0`'s GitHub Release has
+been sitting as an unpublished **Draft** since it was created (2026-08-25) —
+it was never actually made public, and roughly 10 commits of real,
+shipped-looking work (terminal grid rework, usage/cost tracking, sidebar and
+settings redesign, the near-black/amber retheme, memory tiers, and more)
+have landed on `main` since, undocumented in `CHANGELOG.md` until now.
+Whoever cuts the next release should explicitly decide what to do with that
+stale `v0.1.0` draft — publish it as-is first (if `v0.1.0` really is a
+meaningful, independently-releasable point), delete it, or just let the next
+tag (`v0.1.1` or later) supersede it — rather than letting it linger
+unaddressed.
+
 ## Building a `.dmg` locally
 
 ```
@@ -86,6 +171,12 @@ the actual fix, not a one-time workaround.
 
 ## Publishing a GitHub Release
 
+In the normal flow (see "Cutting a release" above) this step runs
+automatically: pushing a `vX.Y.Z` tag triggers `.github/workflows/release.yml`
+on `macos-latest`, which runs the same two commands below itself. The manual
+version here is for running it from a local machine instead — debugging the
+publish step itself, or re-publishing without going through git tags/CI:
+
 ```
 GITHUB_TOKEN=<token with repo scope> npx electron-forge publish --arch=arm64
 GITHUB_TOKEN=<token with repo scope> npx electron-forge publish --arch=x64
@@ -102,9 +193,11 @@ the staged release (description, which `.dmg`/`.zip` assets attached) and
 publishes it manually from the GitHub UI, rather than every `publish` run
 immediately going live and notifying watchers.
 
-This repo's CI workflow (`.github/workflows/`, if present — check for the
-current file, this doc doesn't own it) is expected to run the same `publish`
-command on `macos-latest` when triggered.
+`.github/workflows/release.yml` runs these same two `publish` commands on
+`macos-latest`, triggered by pushing a `vX.Y.Z` tag (or manually via
+`workflow_dispatch`) — see "Cutting a release" above for the end-to-end flow.
+This is separate from `.github/workflows/ci.yml`, which validates ordinary
+pushes/PRs and never builds or publishes anything.
 
 ## Code signing / notarization (not yet configured)
 

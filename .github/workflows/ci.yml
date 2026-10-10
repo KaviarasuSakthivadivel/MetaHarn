@@ -1,0 +1,74 @@
+name: CI
+
+# Validates every push to main and every PR targeting main, so a change can
+# be trusted as "releasable" before cutting a release (see docs/RELEASING.md
+# and .github/workflows/release.yml, which handles the actual tag-triggered
+# build + publish on macos-latest and is intentionally untouched here).
+#
+# Runs on ubuntu-latest, not macos-latest: nothing checked here builds or
+# packages the Electron app (no DMG, no electron-forge), so there is no
+# macOS-specific behavior to validate. `tsc --noEmit` type-checks source
+# without executing it, so it does not need better-sqlite3/node-pty to
+# actually load their native bindings — verified locally before adding this
+# workflow (ubuntu, no native rebuild step, typecheck of apps/desktop and
+# apps/server both passed clean).
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches release.yml's choice: no .nvmrc/.node-version pin exists
+          # in this repo (root package.json only requires >=20); 22 is
+          # current Node LTS, picked for consistency with release.yml rather
+          # than anything CI-specific.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Root install (npm workspaces monorepo — apps/*, packages/*). This
+      # does not rebuild better-sqlite3/node-pty for any particular runtime
+      # (no rebuild:for-electron/rebuild:for-node step) — not needed here
+      # since nothing below loads those native bindings, only type-checks
+      # or bundles source.
+      - run: npm ci
+
+      # apps/web has no native deps of its own; its own build script is
+      # `tsc --noEmit && vite build`, so this both type-checks and verifies
+      # the production bundle builds.
+      - name: Build apps/web (typecheck + vite build)
+        run: npm run build --workspace=apps/web
+
+      # apps/desktop and apps/server have no standalone typecheck script,
+      # so invoke tsc directly against each workspace's own tsconfig.json.
+      # --noEmit on the CLI overrides any outDir in those configs.
+      - name: Typecheck apps/desktop
+        run: npx tsc --noEmit -p apps/desktop/tsconfig.json
+
+      - name: Typecheck apps/server
+        run: npx tsc --noEmit -p apps/server/tsconfig.json
+
+      # packages/* are plain TS libraries consumed by the apps above; none
+      # defines its own build/typecheck npm script, so check each directly.
+      - name: Typecheck packages/context-engine
+        run: npx tsc --noEmit -p packages/context-engine/tsconfig.json
+
+      - name: Typecheck packages/db
+        run: npx tsc --noEmit -p packages/db/tsconfig.json
+
+      - name: Typecheck packages/engine
+        run: npx tsc --noEmit -p packages/engine/tsconfig.json
+
+      # No automated test suite exists yet in this repo (no vitest/jest/
+      # node:test config anywhere) — intentionally not adding a fake test
+      # step here. Add one once real tests exist.

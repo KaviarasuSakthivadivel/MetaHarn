@@ -12,7 +12,8 @@
     "dev:server": "npm run dev --workspace=apps/server",
     "db:migrate": "npm run migrate --workspace=packages/db",
     "rebuild:for-electron": "electron-rebuild -f -w better-sqlite3 --version $(node -p \"require('./node_modules/electron/package.json').version\")",
-    "rebuild:for-node": "npm rebuild better-sqlite3"
+    "rebuild:for-node": "npm rebuild better-sqlite3",
+    "release:version": "node scripts/bump-version.mjs"
   },
   "engines": {
     "node": ">=20"
