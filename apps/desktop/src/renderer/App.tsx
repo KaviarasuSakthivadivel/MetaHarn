@@ -111,8 +111,10 @@ type MainView =
   | { kind: "weeklyRewind" };
 
 const SIDEBAR_MIN_WIDTH = 180;
-const SIDEBAR_STORAGE_KEY = "metaharn:sidebarWidth";
-const SIDEBAR_DEFAULT_WIDTH = 220;
+// Bumped from "metaharn:sidebarWidth" — the default changed from a fixed 220px to 25% of the
+// window, and a stored width from before that change would otherwise keep overriding the new
+// default forever (localStorage is the first thing the width is read from below).
+const SIDEBAR_STORAGE_KEY = "metaharn:sidebarWidth:v2";
 
 export default function App() {
   const { defaultAgentKind } = useSettings();
@@ -163,7 +165,9 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const raw = localStorage.getItem(SIDEBAR_STORAGE_KEY);
     const parsed = raw ? Number(raw) : NaN;
-    return Number.isFinite(parsed) ? parsed : SIDEBAR_DEFAULT_WIDTH;
+    // 1/4 of the window by default — the sidebar used to default to a fixed 220px; dragging the
+    // resize handle (below) still resizes it from there, same as before.
+    return Number.isFinite(parsed) ? parsed : window.innerWidth * 0.25;
   });
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   // Multi-pane terminal grid — an additional way to view a SUBSET of the
@@ -201,7 +205,7 @@ export default function App() {
   useEffect(() => {
     if (!isResizingSidebar) return;
     const onMouseMove = (e: MouseEvent) => {
-      setSidebarWidth(Math.min(window.innerWidth * 0.2, Math.max(SIDEBAR_MIN_WIDTH, e.clientX)));
+      setSidebarWidth(Math.min(window.innerWidth * 0.25, Math.max(SIDEBAR_MIN_WIDTH, e.clientX)));
     };
     const onMouseUp = () => setIsResizingSidebar(false);
     window.addEventListener("mousemove", onMouseMove);
@@ -1144,12 +1148,13 @@ export default function App() {
 
   // Resizable left sidebar — width persists across restarts (same
   // localStorage pattern SettingsContext.tsx already uses for other
-  // preferences), clamped between a fixed usable minimum and 20% of the
+  // preferences), clamped between a fixed usable minimum and 25% of the
   // CURRENT window width, recomputed at render time rather than baked into
   // the stored value — so shrinking the window can never leave the sidebar
   // eating an unreasonable share of it, without needing a separate resize
-  // listener just to re-clamp the stored number.
-  const sidebarMaxWidth = window.innerWidth * 0.2;
+  // listener just to re-clamp the stored number. Defaults to that same 25%
+  // (see the sidebarWidth initializer above); drag the handle to resize it.
+  const sidebarMaxWidth = window.innerWidth * 0.25;
   const clampedSidebarWidth = Math.min(sidebarMaxWidth, Math.max(SIDEBAR_MIN_WIDTH, sidebarWidth));
 
   const activeSessionPath =
