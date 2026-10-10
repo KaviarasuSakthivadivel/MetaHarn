@@ -31,7 +31,7 @@ import AgentSwapMenu from "./AgentSwapMenu.js";
 import { BranchIcon, ClockIcon, CloseIcon, DatabaseIcon, ForkIcon, GridIcon } from "./icons.js";
 import { AGENT_DISPLAY_NAMES, formatAge, projectLabel, sessionTitle } from "./format.js";
 import { useSettings } from "./SettingsContext.js";
-import { renderMarkdown } from "./markdown.js";
+import Markdown from "./Markdown.js";
 
 interface ChatMessage {
   role: "user" | "assistant" | "tool" | "system" | "thinking";
@@ -1673,8 +1673,8 @@ export default function App() {
                       );
                     }
                     return (
-                      <div key={i} style={{ padding: "0 4px", lineHeight: 1.5 }}>
-                        {renderMarkdown(m.text, `msg-${i}`)}
+                      <div key={i} className="metaharn-msg-text" style={{ padding: "0 4px", lineHeight: 1.5 }}>
+                        <Markdown>{m.text}</Markdown>
                         {m.index !== undefined && (
                           <div style={{ marginTop: 2 }}>
                             <BranchButton onClick={() => branchFromMessage(m.index!)} />
