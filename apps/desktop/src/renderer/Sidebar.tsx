@@ -665,8 +665,15 @@ export function statusColor(status: SessionStatus): string {
  * Waiting, plain colored text for Idle/Exited. No status at all (session
  * not currently live — see App.tsx's sessionStatuses) falls back to a
  * plain relative-time line instead of guessing a state. */
-export function StatusLine({ status, fallback }: { status?: SessionStatus; fallback: string }) {
+export function StatusLine({ status, fallback }: { status?: SessionStatus; fallback?: string }) {
   if (!status) {
+    // No fallback text given (ProjectOverview.tsx's card already shows a relative-time line of
+    // its own elsewhere) — render nothing rather than a second, redundant one. Rendering the
+    // literal word "Idle" here used to be the bug: it implied the real "idle" status (a session
+    // with an open-but-unfocused terminal tab, see App.tsx's sessionStatuses), which this session
+    // doesn't have — so the Idle status *filter* (correctly) didn't match it, while this label
+    // (incorrectly) claimed it was idle. Showing nothing here can't make that false claim.
+    if (!fallback) return null;
     // Secondary, not muted — a relative-time fallback is still genuinely
     // useful glanceable info, not decoration, and muted was reading as
     // washed-out next to the bolder title above it.

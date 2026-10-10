@@ -878,7 +878,7 @@ function OverviewSessionCard({
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: SPACE.sm }}>
         <span style={{ fontSize: TEXT.xs, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          <StatusLine status={status} fallback="Idle" />
+          <StatusLine status={status} />
         </span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10.5, color: "var(--color-text-muted)", flexShrink: 0 }}>
           <ClockIcon size={10} />
