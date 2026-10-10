@@ -1,6 +1,6 @@
 {
   "name": "@metaharn/web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "The MetaHarn web/Tauri surface — a normal web app talking to @metaharn/server over HTTP + WebSocket. Runs standalone in a browser (`npm run dev`), or wrapped by the Tauri shell in src-tauri/ (`npm run tauri dev`) — same UI code either way, matching OpenWorker's own surfaces/gui.",

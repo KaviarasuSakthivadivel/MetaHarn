@@ -1,6 +1,6 @@
 {
   "name": "@metaharn/server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Local agent server — the OpenWorker-shaped backend for MetaHarn's web/Tauri surface: one process hosting @metaharn/engine over HTTP + WebSocket, so the UI (browser or Tauri webview) never runs the engine itself.",
