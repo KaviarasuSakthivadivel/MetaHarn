@@ -7,6 +7,8 @@ still include breaking changes.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-10
+
 ## [0.1.1] - 2026-10-10
 
 ### Added
@@ -76,6 +78,7 @@ First real, distributable release.
   reachable and lists every known agent, with an Install link for ones not
   yet on `PATH`.
 
-[Unreleased]: https://github.com/KaviarasuSakthivadivel/MetaHarn/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/KaviarasuSakthivadivel/MetaHarn/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/KaviarasuSakthivadivel/MetaHarn/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/KaviarasuSakthivadivel/MetaHarn/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/KaviarasuSakthivadivel/MetaHarn/releases/tag/v0.1.0
