@@ -713,6 +713,58 @@ export const THEMES: ThemeDef[] = [
     },
   },
   {
+    // GitHub's own dark editor/terminal theme ("github-dark") — the real published palette
+    // (github.githubassets.com's primer color tokens), not a re-derivation of github-light's
+    // colors. GitHub's design system draws a line between its UI red (error/destructive, #f85149)
+    // and its ANSI terminal red (#ff7b72, used for diff -/code) — kept distinct here rather than
+    // collapsing them into one hue the way github-light's own simpler bright==regular mapping does.
+    id: "github-dark",
+    label: "GitHub Dark",
+    mode: "dark",
+    swatch: ["#0d1117", "#58a6ff", "#3fb950", "#ff7b72"],
+    vars: {
+      "--color-bg": "#0d1117",
+      "--color-bg-secondary": "#010409",
+      "--color-bg-elevated": "#161b22",
+      "--color-bg-hover": "#21262d",
+      "--color-border": "#30363d",
+      "--color-text": "#c9d1d9",
+      "--color-text-secondary": "#8b949e",
+      "--color-text-muted": "#6e7681",
+      "--color-accent": "#58a6ff",
+      "--color-accent-hover": "#79c0ff",
+      "--color-accent-soft": "#0d2a4d",
+      "--color-user-bubble": "#c9d1d9",
+      "--color-user-bubble-text": "#0d1117",
+      "--color-tool-bubble": "#161b22",
+      "--color-error": "#f85149",
+      "--color-error-soft": "#3c1618",
+      "--color-editor-bg": "#0d1117",
+    },
+    terminal: {
+      background: "#0d1117",
+      foreground: "#c9d1d9",
+      cursor: "#c9d1d9",
+      selectionBackground: "#30363d",
+      black: "#484f58",
+      red: "#ff7b72",
+      green: "#3fb950",
+      yellow: "#d29922",
+      blue: "#58a6ff",
+      magenta: "#bc8cff",
+      cyan: "#39c5cf",
+      white: "#b1bac4",
+      brightBlack: "#6e7681",
+      brightRed: "#ffa198",
+      brightGreen: "#56d364",
+      brightYellow: "#e3b341",
+      brightBlue: "#79c0ff",
+      brightMagenta: "#d2a8ff",
+      brightCyan: "#56d4dd",
+      brightWhite: "#f0f6fc",
+    },
+  },
+  {
     // Sublime Text's classic — arguably THE most recognized dark theme.
     // Monokai's own source material doesn't really have a second, distinct
     // "true red" separate from its signature hot pink, so accent/error are
