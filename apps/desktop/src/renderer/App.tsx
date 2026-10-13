@@ -29,7 +29,7 @@ import GitPanel from "./GitPanel.js";
 import TerminalGrid from "./TerminalGrid.js";
 import AgentSwapMenu from "./AgentSwapMenu.js";
 import { BranchIcon, ClockIcon, CloseIcon, DatabaseIcon, ForkIcon, GridIcon } from "./icons.js";
-import { AGENT_DISPLAY_NAMES, formatAge, projectLabel, sessionTitle } from "./format.js";
+import { AGENT_DISPLAY_NAMES, formatAge, projectLabel, quotePathIfNeeded, sessionTitle } from "./format.js";
 import { useSettings } from "./SettingsContext.js";
 import Markdown from "./Markdown.js";
 
@@ -124,6 +124,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
+  const [composerDragOver, setComposerDragOver] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [pendingInboxCount, setPendingInboxCount] = useState(0);
@@ -1690,12 +1691,45 @@ export default function App() {
                   })}
                 </div>
 
-                <div style={{ display: "flex", gap: 8, marginTop: 12, flexShrink: 0 }}>
+                <div
+                  // A file dropped anywhere else in the window is already swallowed by main.tsx's
+                  // global dragover/drop guard (Chromium's default is to navigate the window to
+                  // a dropped file's file:// URL, blanking the whole app — that guard prevents
+                  // that, but on its own also means a drop HERE did nothing either, silently).
+                  // stopPropagation keeps this drop from also reaching that global handler, and
+                  // resolving each file via window.metaharn.getPathForFile (Electron 43 removed
+                  // the renderer-accessible File.path shortcut this used to be — see preload.ts)
+                  // appends its real path into the existing composer text, same as typing it.
+                  onDragOver={(e) => {
+                    if (!e.dataTransfer.types.includes("Files")) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setComposerDragOver(true);
+                  }}
+                  onDragLeave={() => setComposerDragOver(false)}
+                  onDrop={(e) => {
+                    if (e.dataTransfer.files.length === 0) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setComposerDragOver(false);
+                    const paths = Array.from(e.dataTransfer.files).map((f) => quotePathIfNeeded(window.metaharn.getPathForFile(f)));
+                    setInput((prev) => (prev && !prev.endsWith(" ") ? `${prev} ` : prev) + paths.join(" "));
+                  }}
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    marginTop: 12,
+                    flexShrink: 0,
+                    borderRadius: 6,
+                    outline: composerDragOver ? "2px dashed var(--color-accent)" : "2px dashed transparent",
+                    outlineOffset: 2,
+                  }}
+                >
                   <input
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && sendPrompt()}
-                    placeholder="Ask about this repo..."
+                    placeholder={composerDragOver ? "Drop to attach file path…" : "Ask about this repo..."}
                     style={{ flex: 1, padding: 8 }}
                     disabled={streaming}
                   />

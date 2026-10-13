@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 export interface HistoryMessage {
   role: "user" | "assistant" | "tool";
@@ -317,6 +317,12 @@ export interface WeeklyRewind {
 }
 
 const metaharnBridge = {
+  // Synchronous, no IPC round-trip — webUtils.getPathForFile only works from the preload/main
+  // side (Electron 43 removed the old renderer-accessible File.path shortcut this used to be),
+  // and sandbox: true in main.ts blocks the renderer from importing "electron" itself, so this
+  // thin wrapper is the only way a drag-and-dropped File object's real filesystem path reaches
+  // the renderer at all. Used by the chat composer and terminal panes' onDrop handlers.
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   init: (repoPath: string, resumeSessionPath?: string) =>
     ipcRenderer.invoke("metaharn:init", repoPath, resumeSessionPath),
   prompt: (text: string) => ipcRenderer.invoke("metaharn:prompt", text),

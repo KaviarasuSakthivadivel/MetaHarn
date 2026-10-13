@@ -7,6 +7,19 @@ import type { AgentKind, SessionListItem } from "../preload/preload.js";
 // monospace) — two adjacent, simultaneously-visible controls describing
 // the same live agent disagreed on its name/casing. Import this instead of
 // adding another one.
+/** A dropped file's real path (from webUtils.getPathForFile, via window.metaharn.getPathForFile)
+ * wrapped in single quotes whenever it holds a character a shell or the chat composer would
+ * otherwise split on — spaces are the common case, but this also covers the rest of what a real
+ * macOS filename can legally contain. A bare single quote in the path is escaped the POSIX way
+ * ('"'"'), which is correct shell-quoting even though the chat composer isn't itself a shell —
+ * matching what a user would type by hand keeps paths usable if they go on to run a command with
+ * one. Shared by the chat composer's and the terminal panes' onDrop handlers (App.tsx,
+ * TerminalPane.tsx) so a dropped file's path reads the same wherever it lands. */
+export function quotePathIfNeeded(path: string): string {
+  if (/^[A-Za-z0-9/_.=:@-]+$/.test(path)) return path;
+  return `'${path.replace(/'/g, `'"'"'`)}'`;
+}
+
 export const ALL_AGENT_KINDS: AgentKind[] = ["claude", "codex", "gemini", "opencode"];
 export const AGENT_DISPLAY_NAMES: Record<AgentKind, string> = {
   claude: "Claude Code",

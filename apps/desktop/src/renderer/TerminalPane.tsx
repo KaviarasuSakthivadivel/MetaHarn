@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -21,6 +21,7 @@ let activeWebglContexts = 0;
 const MAX_WEBGL_CONTEXTS = 4;
 import { useResolvedTheme, useSettings } from "./SettingsContext.js";
 import { getTheme, DEFAULT_DARK_THEME_ID, DEFAULT_LIGHT_THEME_ID } from "./themes.js";
+import { quotePathIfNeeded } from "./format.js";
 
 interface TerminalPaneProps {
   cwd: string;
@@ -52,6 +53,10 @@ export default function TerminalPane({ cwd, terminalSessionId, onFirstInput, vis
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  // Set alongside termRef in the mount effect below; read by the live-theme-update effect to
+  // force a redraw when the theme changes (see that effect's own comment for why).
+  const webglAddonRef = useRef<WebglAddon | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   // Read inside the ResizeObserver callback below, which is created once in
   // the mount effect and would otherwise close over whichever `visible` was
   // current at mount time — same stale-closure-avoidance pattern used
@@ -117,6 +122,7 @@ export default function TerminalPane({ cwd, terminalSessionId, onFirstInput, vis
         webglDisposed = true;
       }
     }
+    webglAddonRef.current = webglAddon;
 
     fitAddon.fit();
     term.focus();
@@ -206,6 +212,7 @@ export default function TerminalPane({ cwd, terminalSessionId, onFirstInput, vis
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
+      webglAddonRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- font size/theme are applied live below, not re-created here;
     // terminalSessionId/onFirstInput/onProcessExit are read once at mount, which is safe because App.tsx gives each
@@ -220,6 +227,15 @@ export default function TerminalPane({ cwd, terminalSessionId, onFirstInput, vis
     if (!term) return;
     term.options.fontSize = terminalFontSize;
     term.options.theme = xtermTheme;
+    // term.options.theme alone updates xterm's own state correctly, but when the WebGL addon is
+    // active (see the mount effect above) it caches already-rendered glyphs in a GPU texture
+    // atlas keyed by the colors they were first drawn with — switching themes on an
+    // already-open, already-scrolled-back terminal left old rows showing stale (sometimes
+    // wrong-mode-entirely) colors until the pane was torn down and recreated, since nothing told
+    // the atlas its cached bitmaps were now wrong. clearTextureAtlas() is addon-webgl's own
+    // documented fix for exactly this ("Clears the terminal's texture atlas and triggers a
+    // redraw") — a no-op when WebGL isn't active (ref is null then).
+    webglAddonRef.current?.clearTextureAtlas();
     if (visible !== false) fitAddonRef.current?.fit();
   }, [terminalFontSize, xtermTheme, visible]);
 
@@ -247,7 +263,39 @@ export default function TerminalPane({ cwd, terminalSessionId, onFirstInput, vis
     // and TerminalGrid.tsx already wrap every TerminalPane instance in their
     // own bordered/rounded container; adding a second one here would nest a
     // box inside that box instead of framing it once.
-    <div style={{ width: "100%", height: "100%", padding: 12, boxSizing: "border-box", background: xtermTheme.background }}>
+    <div
+      // Same reasoning as the chat composer's onDrop (App.tsx): main.tsx's global drop guard
+      // swallows any drop that isn't explicitly consumed here (stopPropagation), and
+      // window.metaharn.getPathForFile is the only way a dropped File's real path reaches the
+      // renderer at all on Electron 43 (sandboxed, no File.path). Writing the quoted path
+      // straight through metaharnPty.write is the same call every real keystroke already makes
+      // (see onData below) — this is "type the path", not a new input path into the pty.
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        if (e.dataTransfer.files.length === 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(false);
+        const paths = Array.from(e.dataTransfer.files).map((f) => quotePathIfNeeded(window.metaharn.getPathForFile(f)));
+        void window.metaharnPty.write(terminalSessionId, paths.join(" "));
+        termRef.current?.focus();
+      }}
+      style={{
+        width: "100%",
+        height: "100%",
+        padding: 12,
+        boxSizing: "border-box",
+        background: xtermTheme.background,
+        outline: dragOver ? "2px dashed var(--color-accent)" : "2px dashed transparent",
+        outlineOffset: -2,
+      }}
+    >
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
     </div>
   );
