@@ -133,11 +133,18 @@ export function BarChart({
 export function ActivityHeatmap({ grid, dayLabels }: { grid: number[][]; dayLabels: string[] }) {
   const max = Math.max(1, ...grid.flat());
   const hourMarks = [0, 3, 6, 9, 12, 15, 18, 21];
+  // Cells are flex:1/minWidth:0 rather than a fixed 14px — at a fixed width, 24 columns need
+  // ~400px (24 * 14px + 23 * 2px gap + the day-label column), which is wider than this widget's
+  // actual home (a 1fr column in WeeklyRewindModal.tsx's three-card grid, Card.tsx has no
+  // overflow control of its own) and spilled the grid out past the card's border instead of
+  // fitting it. Sizing every cell as a share of whatever width the card actually has — same
+  // flex-basis in the hour-mark header row and every day row, so a label still lines up with its
+  // column — fits any card width exactly instead of assuming one.
   return (
-    <div>
+    <div style={{ width: "100%" }}>
       <div style={{ display: "flex", gap: 2, marginLeft: 20, marginBottom: 4 }}>
         {Array.from({ length: 24 }).map((_, h) => (
-          <div key={h} style={{ width: 14, flexShrink: 0, fontSize: 9, color: "var(--color-text-muted)", textAlign: "center" }}>
+          <div key={h} style={{ flex: 1, minWidth: 0, fontSize: 9, color: "var(--color-text-muted)", textAlign: "center" }}>
             {hourMarks.includes(h) ? h : ""}
           </div>
         ))}
@@ -150,9 +157,9 @@ export function ActivityHeatmap({ grid, dayLabels }: { grid: number[][]; dayLabe
               key={h}
               title={count > 0 ? `${dayLabels[d]} ${h}:00 — ${count} turn${count === 1 ? "" : "s"}` : undefined}
               style={{
-                width: 14,
-                height: 14,
-                flexShrink: 0,
+                flex: 1,
+                minWidth: 0,
+                aspectRatio: "1 / 1",
                 borderRadius: 3,
                 background: count === 0 ? "var(--color-bg-hover)" : "var(--color-accent)",
                 opacity: count === 0 ? 1 : Math.min(1, 0.3 + (count / max) * 0.7),
