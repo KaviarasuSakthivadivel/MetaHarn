@@ -51,7 +51,17 @@ async function collectAllTurns(): Promise<UsageTurnWithContext[]> {
 }
 
 function dateKey(d: Date): string {
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD, local aggregation below always buckets off this
+  // Local calendar date, NOT toISOString().slice(0, 10) (that's UTC) — every other date
+  // computation in this file (startOfDay, addDays, mondayOf, and the getDay()-based heatmap/
+  // busiest-day bucketing below) is local-time, and this used to be the one UTC holdout. Any
+  // turn near local midnight in a non-UTC timezone has a different UTC date than local date, so
+  // the old version put it in a different day bucket than the heatmap/busiest-day tile did for
+  // the exact same turn — e.g. Sessions by Day showing Tuesday while Busiest day said Monday for
+  // what was actually one Monday-evening (locally) session.
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function startOfDay(d: Date): Date {
