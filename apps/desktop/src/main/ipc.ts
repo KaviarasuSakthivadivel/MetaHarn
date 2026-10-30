@@ -87,6 +87,7 @@ import {
   removeWorktree,
 } from "./git.js";
 import { createWorktree } from "./worktree.js";
+import { getCrashReportingStatus, setCrashReportingEnabled } from "./crashReporting.js";
 
 // Two backends share one window slot: "pi" is the original, embedded-SDK path
 // (createMetaHarnSession); "owned" is MetaHarn's own engine (ownedEngine.ts), selected via
@@ -134,6 +135,9 @@ export function disposeSessionFor(webContentsId: number) {
 }
 
 export function registerIpcHandlers() {
+  ipcMain.handle("metaharn:getCrashReportingStatus", () => getCrashReportingStatus());
+  ipcMain.handle("metaharn:setCrashReportingEnabled", (_event, enabled: boolean) => setCrashReportingEnabled(enabled));
+
   ipcMain.handle("metaharn:listSessions", async () => {
     try {
       return await listAllSessions();

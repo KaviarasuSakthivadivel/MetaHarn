@@ -5,6 +5,14 @@ import { app, BrowserWindow, ipcMain, nativeImage, shell } from "electron";
 import { disposeSessionFor, registerIpcHandlers } from "./ipc.js";
 import { disposeAllPtysFor, registerPtyIpcHandlers } from "./pty-ipc.js";
 import { startAutomationRuntime, stopAutomationRuntime } from "./automation.js";
+import { initCrashReporting } from "./crashReporting.js";
+
+// As early as possible — before app.setName, before any window exists — so a crash during
+// startup itself still has a chance to be captured. A genuine no-op whenever either of
+// crashReporting.ts's two gates (a maintainer-configured SENTRY_DSN, and the user's own opt-in
+// toggle) is closed, which is the default for every dev build and every build nobody has
+// explicitly turned this on for.
+await initCrashReporting();
 
 // package.json's own productName ("MetaHarn") only applies to a PACKAGED build's Info.plist —
 // electron-forge start runs the raw Electron binary directly, which has no packaged Info.plist

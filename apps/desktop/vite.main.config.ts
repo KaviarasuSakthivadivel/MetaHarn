@@ -62,6 +62,12 @@ export default defineConfig({
         "@modelcontextprotocol/sdk/client/streamableHttp.js",
         "@modelcontextprotocol/sdk/shared/transport.js",
         "@modelcontextprotocol/sdk/types.js",
+        // Pure JS (no native .node binary — its native-crash capture piggybacks on Electron's
+        // own built-in crashReporter/Crashpad instead of shipping one itself), but kept external
+        // for the same reason dotenv/typebox are: this app's main-process build is forced to
+        // real ESM output, and every other real npm dependency here is externalized uniformly
+        // rather than risking the same require()-under-ESM crash class case-by-case.
+        "@sentry/electron/main",
       ],
     },
   },

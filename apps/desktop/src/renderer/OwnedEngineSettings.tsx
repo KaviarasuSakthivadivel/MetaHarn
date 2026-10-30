@@ -163,7 +163,7 @@ function IconButton({ onClick, disabled, danger, label, children }: { onClick: (
 
 /** Same visual switch GeneralPanel's Auto-Approve toggle already used inline — pulled out into
  * a reusable component now that AutomationsPanel needs an identical one for Pause/Resume. */
-function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
+export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
   return (
     <button
       onClick={onClick}

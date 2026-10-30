@@ -4,7 +4,7 @@ import type { AgentStatus, AppInfo } from "../preload/preload.js";
 import { useSettings, type ThemeMode } from "./SettingsContext.js";
 import { THEMES, type ThemeDef } from "./themes.js";
 import ConfirmDialog from "./ConfirmDialog.js";
-import { AutomationsPanel, GeneralPanel as OwnedGeneralPanel, McpPanel, MemoryPanel, ModelsPanel as OwnedModelsPanel } from "./OwnedEngineSettings.js";
+import { AutomationsPanel, GeneralPanel as OwnedGeneralPanel, McpPanel, MemoryPanel, ModelsPanel as OwnedModelsPanel, Toggle } from "./OwnedEngineSettings.js";
 import { Eyebrow, RADIUS, Row, SegmentedControl, SPACE, TEXT } from "./ui.js";
 import { ClockIcon, CpuIcon, DatabaseIcon, GearIcon, InfoIcon, PaletteIcon, PlugIcon, TerminalIcon } from "./icons.js";
 
@@ -171,10 +171,16 @@ export default function SettingsPage() {
   const [agentError, setAgentError] = useState<string | null>(null);
   const [pendingUninstall, setPendingUninstall] = useState<AgentStatus | null>(null);
   const [nav, setNav] = useState<NavId>("appearance");
+  const [crashReporting, setCrashReporting] = useState<{ configured: boolean; enabled: boolean } | null>(null);
 
   useEffect(() => {
     void window.metaharn.getAppInfo().then(setAppInfo);
   }, []);
+
+  const refreshCrashReporting = () => {
+    void window.metaharn.getCrashReportingStatus().then(setCrashReporting);
+  };
+  useEffect(refreshCrashReporting, []);
 
   const refreshAgentStatuses = () => {
     void window.metaharn.getAgentStatuses().then(setAgentStatuses);
@@ -415,6 +421,31 @@ export default function SettingsPage() {
               <PageHeader title="About" />
               <Card>
                 <Row label="MetaHarn" description="A meta-harness for an agentic dev platform." control={<span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>v{appInfo?.version ?? "…"}</span>} />
+              </Card>
+              <Card>
+                {crashReporting?.configured ? (
+                  <Row
+                    label="Crash reporting"
+                    description={
+                      crashReporting.enabled
+                        ? "Sends crash details to the developer to help fix bugs. Takes effect on next launch — turning this off won't retroactively un-send anything already captured this session."
+                        : "Off. Turn this on to help fix bugs by sending crash details to the developer. Takes effect on next launch."
+                    }
+                    control={
+                      <Toggle
+                        on={crashReporting.enabled}
+                        label="Toggle crash reporting"
+                        onClick={() => void window.metaharn.setCrashReportingEnabled(!crashReporting.enabled).then(refreshCrashReporting)}
+                      />
+                    }
+                  />
+                ) : (
+                  <Row
+                    label="Crash reporting"
+                    description="Not available in this build — no reporting endpoint is configured, so there's nowhere for a report to go."
+                    control={<span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>Unavailable</span>}
+                  />
+                )}
               </Card>
             </>
           )}

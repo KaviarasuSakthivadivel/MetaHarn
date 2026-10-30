@@ -323,6 +323,13 @@ const metaharnBridge = {
   // thin wrapper is the only way a drag-and-dropped File object's real filesystem path reaches
   // the renderer at all. Used by the chat composer and terminal panes' onDrop handlers.
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+  /** `configured` = a maintainer set SENTRY_DSN when building this copy; `enabled` = the user's
+   * own stored opt-in on top of that (see crashReporting.ts — both gates must be open before
+   * anything is ever sent). Settings' Privacy section reads this to show the right state. */
+  getCrashReportingStatus: (): Promise<{ configured: boolean; enabled: boolean }> =>
+    ipcRenderer.invoke("metaharn:getCrashReportingStatus"),
+  /** Takes effect on the next launch, not live — see crashReporting.ts's own doc comment. */
+  setCrashReportingEnabled: (enabled: boolean): Promise<void> => ipcRenderer.invoke("metaharn:setCrashReportingEnabled", enabled),
   init: (repoPath: string, resumeSessionPath?: string) =>
     ipcRenderer.invoke("metaharn:init", repoPath, resumeSessionPath),
   prompt: (text: string) => ipcRenderer.invoke("metaharn:prompt", text),

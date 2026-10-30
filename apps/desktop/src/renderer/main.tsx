@@ -18,6 +18,20 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./theme.css";
 
+// Both of crashReporting.ts's gates (a maintainer-configured SENTRY_DSN, and the user's own
+// opt-in toggle) must be open before this does anything — the common case, every dev build and
+// every build nobody has turned this on for, is a no-op: the dynamic import never even runs.
+// Fire-and-forget: renderer error capture doesn't need to block first paint, and main.ts already
+// initialized its own side (which is what actually ships every event, renderer's included — see
+// that file's own comment) regardless of whether this resolves before or after the user hits a
+// bug. The renderer side is still needed because, without it, errors that occur IN the renderer
+// (as opposed to the main process) are never even caught in the first place.
+void window.metaharn.getCrashReportingStatus().then(async ({ configured, enabled }) => {
+  if (!configured || !enabled) return;
+  const Sentry = await import("@sentry/electron/renderer");
+  Sentry.init({});
+});
+
 // Chromium's default behavior for a file/folder dropped onto the window is
 // to navigate to it (as a file:// URL), which blanks out the whole app.
 // There's no legitimate drop target here, so block it globally.
